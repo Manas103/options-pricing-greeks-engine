@@ -1,0 +1,12 @@
+$ ./build/test_suite
+[PASS] BS call textbook value (|10.450584 - 10.450600| <= 0.001000)
+[PASS] put-call parity (|4.877058 - 4.877058| <= 0.000000)
+[PASS] put-call parity (|-19.252805 - -19.252805| <= 0.000000)
+[PASS] put-call parity (|31.782119 - 31.782119| <= 0.000000)
+[PASS] MC reduced price converges to BS (smoke test) (|9.414641 - 9.413403| <= 0.058881)
+[PASS] antithetic+CV standard error < naive
+[PASS] barrier in-out exact parity (shared paths) (|9.323866 - 9.323866| <= 0.000000)
+[PASS] pathwise vs bump delta (smoke test) (|0.598681 - 0.598558| <= 0.050000)
+[PASS] pathwise vs bump vega (smoke test) (|38.677710 - 38.676960| <= 0.500000)
+
+9 passed, 0 failed

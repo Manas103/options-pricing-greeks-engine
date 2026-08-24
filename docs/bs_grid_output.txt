@@ -1,0 +1,5 @@
+$ ./build/bench_bs_grid 20 20 120000000 42 docs/bs_grid.csv
+grid: 20 strikes x 20 maturities = 400 cells, N=120000000 paths/cell, threads=16
+max relative error: 0.02444 %
+mean relative error: 0.00190 %
+csv written to: docs/bs_grid.csv

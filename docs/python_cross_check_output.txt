@@ -1,0 +1,5 @@
+$ python validate_bs_grid.py
+loaded 400 grid cells from C:\Users\Manas\Downloads\Total Job Application process flow\projects\options-pricing-greeks-engine\docs\bs_grid.csv
+C++ closed-form vs Python (scipy) closed-form: max abs diff = 2.501e-04, mean abs diff = 6.064e-05
+MC price vs Python closed-form: max relative error = 0.02356 %, mean relative error = 0.00210 %
+error surface plot written to C:\Users\Manas\Downloads\Total Job Application process flow\projects\options-pricing-greeks-engine\docs\error_surface.png

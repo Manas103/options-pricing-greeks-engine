@@ -1,0 +1,6 @@
+$ ./build/bench_variance_reduction 300 500000 7 100 0.40 3.0
+replications=300, paths_per_replication=500000
+naive:   analytic SE (avg over runs) = 0.092202, empirical std across runs = 0.084559
+reduced: analytic SE (avg over runs) = 0.009492, empirical std across runs = 0.009525
+SE reduction ratio (analytic avg)   : 9.714x
+SE reduction ratio (empirical)       : 8.878x

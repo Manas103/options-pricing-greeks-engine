@@ -1,0 +1,7 @@
+$ ./build/bench_greeks 4000000 123
+paths=4000000, hS=0.5000, hSigma=0.0050
+call: pathwise delta=0.598385  bump delta=0.598365  |diff|=0.000020
+call: pathwise vega =38.629642  bump vega =38.629190  |diff|=0.000452
+put : pathwise delta=-0.401502  bump delta=-0.401522  |diff|=0.000020
+put : pathwise vega =38.687877  bump vega =38.687425  |diff|=0.000452
+max abs diff (pathwise vs bump-and-revalue): 0.000452

@@ -1,0 +1,8 @@
+$ ./build/bench_barrier 1000000 200 2026
+paths=1000000, steps=200, S0=100.0 K=100.0 B=85.0 r=0.03 sigma=0.20 T=1.0
+down-and-out/in call: down-out=9.026095 (se=0.014152)  down-in=0.386817 (se=0.002514)
+down-and-out/in call: shared-path sum=9.412913  exact |diff| vs sum-on-same-paths=1.616e-13
+down-and-out/in call: independent-seed vanilla MC=9.420286 (se=0.002905)  closed-form BS=9.413403  |diff|=0.007374  ~0.51 standard errors
+down-and-out/in put : down-out=0.818720 (se=0.002418)  down-in=5.646479 (se=0.009533)
+down-and-out/in put : shared-path sum=6.465199  exact |diff| vs sum-on-same-paths=1.528e-13
+down-and-out/in put : independent-seed vanilla MC=6.464840 (se=0.002905)  closed-form BS=6.457957  |diff|=0.000359  ~0.04 standard errors
