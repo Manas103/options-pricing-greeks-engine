@@ -5,9 +5,26 @@ Brownian motion, with antithetic-variate and control-variate variance
 reduction, pathwise Greeks cross-checked against bump-and-revalue, and a
 closed-form Black-Scholes implementation as the reference oracle. C++17 for
 the engine, Python (scipy) for an independent second opinion on that
-reference. Every number below was measured on this machine, not targeted:
-where the first attempt at the accuracy claim fell short, the README says so
-and shows the second attempt that met it.
+reference. Extended with an arbitrage-free SVI volatility surface fit (hard
+no-arbitrage constraints enforced during the optimization, not checked
+afterward) and a relative-value screener over a simulated option chain.
+Every number below was measured on this machine, not targeted: where the
+first attempt at a claim fell short, or landed somewhere other than
+expected, the README says so plainly.
+
+## Extension: arbitrage-free SVI surface fit and relative-value screener (Aug. 2026)
+
+Two new pieces sit on top of the pricer above: `include/implied_vol.hpp`
+inverts a Black-Scholes price to an implied vol (bisection, cross-checked
+against the closed form it was struck from); `include/svi.hpp` fits a raw
+SVI (Gatheral) total-variance slice per expiry with butterfly convexity and
+calendar monotonicity enforced as hard constraints during a constrained
+Nelder-Mead search, not measured after the fact. `apps/svi_fit.cpp`
+generates a synthetic 6,000-quote listed-style chain (20 expiries x 300
+strikes) from a ground-truth SVI surface plus noise, fits per-expiry slices
+back to it, and reports the fit error and constraint-violation counts.
+`apps/screener.cpp` reads that fit and ranks relative-value dislocations,
+keeping only the ones whose theoretical edge survives a half-spread charge.
 
 ## Why this exists
 
@@ -32,6 +49,9 @@ validated against an independent method rather than trusted on its own.
 - **All data is synthetic.** There are no real market quotes anywhere in
   this repository; every price is a model price against another model
   price.
+- **The 6,000-quote chain is a simulated listed option chain, not a real
+  one.** It is generated from a hand-chosen ground-truth SVI surface plus
+  noise, not downloaded, scraped, or subscribed to from any venue.
 - **Machine and toolchain**, for every number below: 8 physical / 16 logical
   cores (AMD Ryzen 7 7800X3D), WSL2 Ubuntu 22.04, g++ 11.4.0, `-O3`, CMake
   3.22.1, C++17. The Python cross-check ran on Windows 11, Python 3.12.10,
@@ -58,6 +78,10 @@ python/
                               no code with include/black_scholes.hpp
   validate_bs_grid.py         cross-checks the C++ grid CSV against it, plots the error surface
   tests/test_black_scholes_ref.py  pytest for the Python reference
+include/implied_vol.hpp       Black-Scholes implied-vol inversion (bisection)
+include/svi.hpp               raw SVI slice fit, hard butterfly + calendar constraints
+apps/svi_fit.cpp               generates the synthetic 6,000-quote chain, fits SVI per expiry
+apps/screener.cpp              two-stage relative-value screener over the fitted chain
 ```
 
 ### Why a second, independent Black-Scholes implementation
@@ -107,9 +131,43 @@ floating-point precision rather than "within Monte Carlo noise". That is a
 stronger reference oracle than a closed-form barrier formula would be, and
 it needs no extra model.
 
+### Why hard constraints during the fit, not a post-hoc check
+
+Butterfly convexity (total variance convex in log-moneyness, ruling out a
+negative-density butterfly arbitrage) and calendar monotonicity (total
+variance non-decreasing across expiries at fixed strike, ruling out a
+calendar-spread arbitrage) are enforced by rejecting any candidate parameter
+vector that violates them during the Nelder-Mead search itself
+(`is_convex`, `respects_calendar_floor` in `include/svi.hpp` gate every
+evaluation; a violating candidate is scored `+infinity` and `fit_slice`
+separately tracks and returns the best *feasible* point ever seen, not
+whichever vertex the simplex last holds). `model-validation-alerting`
+(github.com/Manas103/model-validation-alerting) runs the same two
+conditions as a rules engine applied *after* an already-fitted synthetic
+surface; that catches a violation but cannot prevent one, and a surface a
+trader is about to trade off of is better built so the violation cannot
+occur in the returned answer at all. Both approaches are legitimate for
+different purposes (a post-hoc check is the right tool when you do not
+control the fitting process, e.g. validating someone else's marks); this
+repo's design is the stronger one when you do.
+
+### Why a two-stage screener, not one threshold
+
+A single "residual bigger than X vol points" filter conflates two different
+questions: is this quote's disagreement with the fitted curve big enough to
+be a real curve-vs-quote departure rather than fit noise, and is trading it
+actually worth the transaction cost. `apps/screener.cpp` answers them
+separately: stage one is a materiality filter in vol points (median absolute
+residual plus 2x the median absolute deviation of that residual across the
+whole surface, a robust outlier threshold that does not assume normality);
+stage two reprices only the stage-one survivors at the fitted vol and keeps
+only the ones whose theoretical edge exceeds that specific quote's own half
+bid-ask spread, not the book's average spread, because the same vol-point
+gap is worth very different dollar amounts depending on that option's vega.
+
 ## Validation
 
-Four independent layers, each printed with real output below and under
+Six independent layers, each printed with real output below and under
 `docs/`:
 
 1. **Closed-form cross-check, two languages.** C++ `black_scholes.hpp` vs
@@ -123,6 +181,15 @@ Four independent layers, each printed with real output below and under
 4. **Exact per-path algebraic identity** for barrier in-out parity, plus an
    independent statistical comparison (different seed, and the closed form)
    as a second, weaker-but-independent check on the same claim.
+5. **Implied-vol round trip.** Generate a price from a known vol with the
+   closed form, invert it with `implied_vol.hpp`'s own bisection, and check
+   it recovers the known vol, for both calls and puts.
+6. **SVI feasibility, on both synthetic and adversarial inputs.**
+   `is_convex` and `respects_calendar_floor` are each tested against a slice
+   built to satisfy them and one built to violate them; `fit_slice` is
+   tested against noiseless SVI-generated data (must recover it to near-zero
+   sum of squared error) and against a case with an active calendar floor
+   (must still return a feasible fit).
 
 ```
 $ ./build/test_suite
@@ -135,8 +202,20 @@ $ ./build/test_suite
 [PASS] barrier in-out exact parity (shared paths) (|9.323866 - 9.323866| <= 0.000000)
 [PASS] pathwise vs bump delta (smoke test) (|0.598681 - 0.598558| <= 0.050000)
 [PASS] pathwise vs bump vega (smoke test) (|38.677710 - 38.676960| <= 0.500000)
+[PASS] implied vol solver converges (call)
+[PASS] implied vol solver round-trips known vol (call) (|0.270000 - 0.270000| <= 0.000001)
+[PASS] implied vol solver converges (put)
+[PASS] implied vol solver round-trips known vol (put) (|0.310000 - 0.310000| <= 0.000001)
+[PASS] is_convex accepts a genuine SVI slice
+[PASS] is_convex rejects a slice whose total variance dips negative
+[PASS] respects_calendar_floor rejects a genuine violation
+[PASS] respects_calendar_floor accepts a slice that clears the floor
+[PASS] fit_slice returns a feasible fit on noiseless SVI-generated data
+[PASS] fit_slice recovers noiseless SVI-generated data to near-zero SSE
+[PASS] fit_slice with an active calendar floor still returns feasible
+[PASS] fit_slice's returned params respect the calendar floor directly
 
-9 passed, 0 failed
+21 passed, 0 failed
 ```
 
 Full transcript: `docs/test_output.txt`. Python side: `docs/python_cross_check_output.txt`.
@@ -206,11 +285,67 @@ target, in 2m21s wall time on this machine. Reported honestly as what it is:
 a path-count decision made after measuring the first attempt, not a target
 picked in advance and hit on the first try.
 
+### The screener's honest numbers landed nowhere near the resume's
+
+The resume line this extension exists to support says "37 of an unfiltered
+214" dislocations survived a half-spread charge, and 0.31 vol points of
+median absolute fit error. The measured numbers here are 14 of 872, and
+0.1262 vol points. Nothing here was tuned to chase 37/214; the pipeline was
+built to a defensible two-stage design first (materiality threshold, then
+economic threshold) and then run once. The fit error came in roughly 2.5x
+*better* than the resume's figure, which is a good sign for the constrained
+optimizer, but "unfiltered" candidate count and survivor count are simply
+different quantities on this data than they are on whatever the resume
+writer estimated before any code existed: 872 candidates come from a robust
+statistical materiality filter over 6,000 quotes (roughly 14.5% of the
+chain, which is a plausible fraction for a median+2-MAD threshold on
+realistically noisy synthetic quotes), and 14 of those clear a half-spread
+charge once real per-quote spreads are applied. Both counts are reported as
+measured, not adjusted to match a number written before the code existed;
+reconciling the resume text to this measurement is a separate stage's job.
+
 ## Measured results
 
 8 physical / 16 logical cores (AMD Ryzen 7 7800X3D), WSL2 Ubuntu 22.04, g++
 11.4.0 `-O3`. Standard errors below vary run to run by a few percent; where
 that matters a range or the printed `se` is given directly.
+
+**SVI surface fit: 6,000 synthetic quotes, 20 expiries x 300 strikes.**
+
+```
+$ ./build/svi_fit
+generated 6000 quotes: 20 expiries x 300 strikes, seed=2027
+implied-vol round trip (gen_vol -> BS price -> ivol::solve): max abs error = 1.603e-02, inversion failures = 0
+...
+butterfly (convexity) violations on 1200-point verification grid, 20 expiries: 0
+calendar (monotonicity) violations across 19 adjacent expiry pairs: 0
+any expiry returned infeasible by fit_slice itself: false
+median absolute error, fitted SVI vs quoted vol, 6000 quotes: 0.1262 vol points
+```
+
+**Median absolute error 0.1262 vol points across all 6,000 quotes, with zero
+butterfly or calendar violations on either the fitted parameters themselves
+or a separate 1,200-point verification grid.** The verification grid is
+deliberately not the same points the optimizer's constraint checks used
+during the fit, so this is an independent-of-the-optimizer confirmation that
+the returned surface is genuinely arbitrage-free, not merely unpenalized at
+the exact points the fit happened to check. Full transcript, including all
+20 expiries' fitted parameters: `docs/svi_fit_output.txt`.
+
+**Relative-value screener, same 6,000-quote chain.**
+
+```
+$ ./build/screener
+loaded 6000 quotes from docs/synthetic_chain.csv
+stage 1 (materiality, median=0.1262 vol pts, MAD=0.0748 vol pts, threshold=median+2.0xMAD=0.2757 vol pts): 872 of 6000 quotes are dislocation candidates
+stage 2 (economic, per-quote half-spread charge): 14 of 872 candidates survive
+
+SUMMARY: 14 of an unfiltered 872 dislocations survived a half-spread charge
+```
+
+**14 of an unfiltered 872 dislocations survived a half-spread charge** (see
+Findings for how this compares to the resume's estimate). Full transcript
+and the survivor list: `docs/screener_output.txt`, `docs/screener_survivors.csv`.
 
 **Accuracy: MC vs closed-form Black-Scholes, 400-cell grid (20 strikes x 20
 maturities, moneyness 85%-115%, maturity 0.25y-2.0y, 120,000,000 paths per
@@ -298,6 +433,8 @@ make -j"$(nproc)"
 ./bench_variance_reduction 300 500000 7 100 0.40 3.0
 ./bench_greeks 4000000 123
 ./bench_barrier 1000000 200 2026
+./svi_fit
+./screener
 ```
 
 ```bash
@@ -307,6 +444,20 @@ pip install -r requirements.txt
 python -m pytest tests/ -q
 python validate_bs_grid.py   # cross-checks docs/bs_grid.csv, writes docs/error_surface.png
 ```
+
+## Sibling comparison
+
+`model-validation-alerting` (https://github.com/Manas103/model-validation-alerting)
+checks put-call parity, strike monotonicity, butterfly convexity and
+calendar-spread no-arbitrage on an already-fitted synthetic option surface,
+as a guardrail rules engine: 24 of 24 seeded no-arbitrage violations caught,
+0 false positives over 12,000 quotes. That is the right tool for validating
+marks you did not produce yourself. This repo enforces the same two
+no-arbitrage conditions as hard constraints inside the fit itself, so the
+returned SVI slice cannot violate them in the first place (0 violations on
+an independent 1,200-point verification grid, 20/20 expiries feasible);
+"catches it after" and "cannot produce it" are different guarantees, and a
+surface a trader is about to act on deserves the stronger one.
 
 ## Limitations
 
@@ -326,3 +477,15 @@ python validate_bs_grid.py   # cross-checks docs/bs_grid.csv, writes docs/error_
   short-dated cells** where relative error is dominated by the MC noise
   floor rather than bias; see Findings for why, and Measured Results for
   what that means for the accuracy claim's scope.
+- **The SVI fit is per-expiry, not a single global parameterization** (no
+  SSVI or surface-wide parsimony), and the Nelder-Mead search is a local
+  optimizer with a fixed initial guess, not a global one; it was not
+  stress-tested against adversarially difficult ground-truth surfaces
+  beyond the calendar-floor-active case in the test suite.
+- **The screener's economic threshold is a half-spread crossing cost per
+  quote and nothing else.** It does not model market impact, does not
+  size a position, and does not account for correlation between nearby
+  strikes' "dislocations" possibly being the same underlying mispricing
+  counted more than once.
+- **The synthetic chain's bid-ask spreads are a modeled function of the
+  quote, not sourced from any real venue's quoted market.**

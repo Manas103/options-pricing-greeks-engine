@@ -1,0 +1,30 @@
+generated 6000 quotes: 20 expiries x 300 strikes, seed=2027
+implied-vol round trip (gen_vol -> BS price -> ivol::solve): max abs error = 1.603e-02, inversion failures = 0
+expiry  0 T=0.0833: a=-0.019760 b=0.021874 rho=-0.0108 m=0.4093 sigma=1.0000  sse=5.297832e-06  feasible=true  iters=867
+expiry  1 T=0.1842: a=-0.028490 b=0.034757 rho=0.0247 m=0.3997 sigma=1.0000  sse=8.702294e-06  feasible=true  iters=630
+expiry  2 T=0.2851: a=-0.030594 b=0.040734 rho=-0.0071 m=0.3785 sigma=1.0000  sse=1.609203e-05  feasible=true  iters=553
+expiry  3 T=0.3860: a=-0.029183 b=0.042917 rho=-0.0234 m=0.3988 sigma=0.9998  sse=3.125652e-05  feasible=true  iters=467
+expiry  4 T=0.4868: a=-0.028264 b=0.045567 rho=-0.0282 m=0.4086 sigma=1.0000  sse=4.808850e-05  feasible=true  iters=668
+expiry  5 T=0.5877: a=-0.027244 b=0.048183 rho=-0.0392 m=0.4068 sigma=1.0000  sse=6.722184e-05  feasible=true  iters=729
+expiry  6 T=0.6886: a=-0.028195 b=0.052702 rho=-0.0649 m=0.3648 sigma=1.0000  sse=8.809899e-05  feasible=true  iters=563
+expiry  7 T=0.7895: a=-0.025070 b=0.052644 rho=-0.0679 m=0.3904 sigma=1.0000  sse=9.970159e-05  feasible=true  iters=612
+expiry  8 T=0.8904: a=-0.023054 b=0.053650 rho=-0.0725 m=0.4032 sigma=1.0000  sse=1.238295e-04  feasible=true  iters=430
+expiry  9 T=0.9912: a=-0.020387 b=0.053928 rho=-0.0739 m=0.4181 sigma=1.0000  sse=1.734233e-04  feasible=true  iters=482
+expiry 10 T=1.0921: a=-0.017413 b=0.053363 rho=-0.0634 m=0.4590 sigma=1.0000  sse=1.705363e-04  feasible=true  iters=564
+expiry 11 T=1.1930: a=0.020494 b=0.034324 rho=-0.9111 m=-0.1398 sigma=0.8582  sse=2.221328e-04  feasible=true  iters=992
+expiry 12 T=1.2939: a=0.008632 b=0.067191 rho=-0.9102 m=-0.6000 sigma=0.9730  sse=2.730378e-04  feasible=true  iters=1731
+expiry 13 T=1.3947: a=0.009732 b=0.067448 rho=-0.9156 m=-0.6000 sigma=1.0000  sse=2.589242e-04  feasible=true  iters=504
+expiry 14 T=1.4956: a=0.014775 b=0.065146 rho=-0.9434 m=-0.5984 sigma=1.0000  sse=3.100194e-04  feasible=true  iters=745
+expiry 15 T=1.5965: a=0.017044 b=0.065516 rho=-0.9414 m=-0.6000 sigma=1.0000  sse=3.410656e-04  feasible=true  iters=703
+expiry 16 T=1.6974: a=0.019845 b=0.065785 rho=-0.9565 m=-0.6000 sigma=1.0000  sse=4.299727e-04  feasible=true  iters=640
+expiry 17 T=1.7982: a=0.022422 b=0.065215 rho=-0.9610 m=-0.6000 sigma=0.9999  sse=4.027425e-04  feasible=true  iters=643
+expiry 18 T=1.8991: a=0.028206 b=0.060747 rho=-0.9990 m=-0.5921 sigma=1.0000  sse=4.408541e-04  feasible=true  iters=587
+expiry 19 T=2.0000: a=0.029746 b=0.060785 rho=-0.9990 m=-0.5799 sigma=1.0000  sse=5.532036e-04  feasible=true  iters=450
+
+butterfly (convexity) violations on 1200-point verification grid, 20 expiries: 0
+calendar (monotonicity) violations across 19 adjacent expiry pairs: 0
+any expiry returned infeasible by fit_slice itself: false
+median absolute error, fitted SVI vs quoted vol, 6000 quotes: 0.1262 vol points
+
+chain written to: docs/synthetic_chain.csv
+SVI params written to: docs/svi_params.csv

@@ -1,0 +1,20 @@
+loaded 6000 quotes from docs/synthetic_chain.csv
+stage 1 (materiality, median=0.1262 vol pts, MAD=0.0748 vol pts, threshold=median+2.0xMAD=0.2757 vol pts): 872 of 6000 quotes are dislocation candidates
+stage 2 (economic, per-quote half-spread charge): 14 of 872 candidates survive
+
+SUMMARY: 14 of an unfiltered 872 dislocations survived a half-spread charge
+
+top 10 survivors by |theoretical edge|:
+exp  T      K        type   resid_vp  edge$     halfspr$  mid$     
+0    0.083  123.88   C      -0.8226   -0.0000   0.0000    0.0001   
+0    0.083  125.44   C      -0.7815   -0.0000   0.0000    0.0000   
+0    0.083  126.71   C      -0.8325   -0.0000   0.0000    0.0000   
+0    0.083  132.89   C      -0.9026   -0.0000   0.0000    0.0000   
+0    0.083  132.23   C      1.1053    0.0000    0.0000    0.0000   
+0    0.083  132.56   C      1.0777    0.0000    0.0000    0.0000   
+0    0.083  133.22   C      1.0237    0.0000    0.0000    0.0000   
+0    0.083  133.56   C      0.9974    0.0000    0.0000    0.0000   
+0    0.083  133.90   C      0.9715    0.0000    0.0000    0.0000   
+0    0.083  134.23   C      0.9461    0.0000    0.0000    0.0000   
+
+survivors written to: docs/screener_survivors.csv

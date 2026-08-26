@@ -1,4 +1,3 @@
-$ ./build/test_suite
 [PASS] BS call textbook value (|10.450584 - 10.450600| <= 0.001000)
 [PASS] put-call parity (|4.877058 - 4.877058| <= 0.000000)
 [PASS] put-call parity (|-19.252805 - -19.252805| <= 0.000000)
@@ -8,5 +7,17 @@ $ ./build/test_suite
 [PASS] barrier in-out exact parity (shared paths) (|9.323866 - 9.323866| <= 0.000000)
 [PASS] pathwise vs bump delta (smoke test) (|0.598681 - 0.598558| <= 0.050000)
 [PASS] pathwise vs bump vega (smoke test) (|38.677710 - 38.676960| <= 0.500000)
+[PASS] implied vol solver converges (call)
+[PASS] implied vol solver round-trips known vol (call) (|0.270000 - 0.270000| <= 0.000001)
+[PASS] implied vol solver converges (put)
+[PASS] implied vol solver round-trips known vol (put) (|0.310000 - 0.310000| <= 0.000001)
+[PASS] is_convex accepts a genuine SVI slice
+[PASS] is_convex rejects a slice whose total variance dips negative
+[PASS] respects_calendar_floor rejects a genuine violation
+[PASS] respects_calendar_floor accepts a slice that clears the floor
+[PASS] fit_slice returns a feasible fit on noiseless SVI-generated data
+[PASS] fit_slice recovers noiseless SVI-generated data to near-zero SSE
+[PASS] fit_slice with an active calendar floor still returns feasible
+[PASS] fit_slice's returned params respect the calendar floor directly
 
-9 passed, 0 failed
+21 passed, 0 failed

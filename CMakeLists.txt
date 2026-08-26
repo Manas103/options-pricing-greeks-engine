@@ -28,5 +28,9 @@ target_link_libraries(bench_greeks PRIVATE Threads::Threads)
 add_executable(bench_barrier apps/bench_barrier.cpp)
 target_link_libraries(bench_barrier PRIVATE Threads::Threads)
 
+add_executable(svi_fit apps/svi_fit.cpp)
+
+add_executable(screener apps/screener.cpp)
+
 enable_testing()
 add_test(NAME hand_rolled_suite COMMAND test_suite)
