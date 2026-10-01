@@ -19,5 +19,13 @@
 [PASS] fit_slice recovers noiseless SVI-generated data to near-zero SSE
 [PASS] fit_slice with an active calendar floor still returns feasible
 [PASS] fit_slice's returned params respect the calendar floor directly
+[PASS] zero-dividend American call == European call (no early exercise value) (|10.440591 - 10.440591| <= 0.000001)
+[PASS] zero-dividend American call ~= closed-form BS call (|10.440591 - 10.450584| <= 0.050000)
+[PASS] American put >= European put (no dividends)
+[PASS] American put >= European put (with dividends and borrow)
+[PASS] American tree value >= intrinsic at every node (5050 nodes checked)
+[PASS] American implied vol solver converges (put, with dividends)
+[PASS] American implied vol solver round-trips known vol (|0.220000 - 0.220000| <= 0.000100)
+[PASS] 50-step American tree within 0.05 of a 400-step tree (|9.084964 - 9.096184| <= 0.050000)
 
-21 passed, 0 failed
+29 passed, 0 failed

@@ -1,0 +1,6 @@
+total raw quotes: 12002112
+quarantined (any rule): 3103 (0.02585%)
+  butterfly_convexity: 1616
+  calendar_monotonicity: 1037
+  early_exercise_lower_bound: 450
+clean quotes passed to inversion: 11999009

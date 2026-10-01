@@ -1,0 +1,72 @@
+
+=== ATM put, 1y, 2 divs (S0=100.0 K=100.0 sigma=0.25 T=1.00 borrow=0.010 divs=2) ===
+  steps=  10  price=11.248001  time=   14.31 us
+  steps=  20  price=11.202788  time=    6.75 us
+  steps=  30  price=11.170598  time=   17.68 us
+  steps=  40  price=11.147925  time=   24.55 us
+  steps=  50  price=11.133952  time=   42.16 us
+  steps=  60  price=11.122427  time=   55.08 us
+  steps=  80  price=11.104819  time=   91.96 us
+  steps= 100  price=11.093490  time=  153.52 us
+  steps= 150  price=11.075373  time=  332.74 us
+  steps= 200  price=11.084143  time=  589.52 us
+  steps= 400  price=11.089824  time= 2316.04 us
+  steps=1000  price=11.086174  time=21648.95 us
+  (reference @ 1000 steps = 11.086174)
+  diff vs 1000-step reference at steps=40: 0.061751 (0.5570%)
+  diff vs 1000-step reference at steps=50: 0.047778 (0.4310%)
+  diff vs 1000-step reference at steps=60: 0.036252 (0.3270%)
+
+=== 25-delta-ish OTM put, 1y, high div (S0=100.0 K=88.0 sigma=0.25 T=1.00 borrow=0.012 divs=2) ===
+  steps=  10  price=6.796737  time=    2.40 us
+  steps=  20  price=6.748843  time=    8.59 us
+  steps=  30  price=6.713192  time=   18.88 us
+  steps=  40  price=6.686829  time=   31.48 us
+  steps=  50  price=6.667158  time=   47.90 us
+  steps=  60  price=6.651358  time=   68.00 us
+  steps=  80  price=6.628611  time=  120.82 us
+  steps= 100  price=6.618088  time=  196.07 us
+  steps= 150  price=6.640997  time=  414.72 us
+  steps= 200  price=6.644260  time=  926.78 us
+  steps= 400  price=6.629958  time= 2457.53 us
+  steps=1000  price=6.633693  time=14151.46 us
+  (reference @ 1000 steps = 6.633693)
+  diff vs 1000-step reference at steps=40: 0.053136 (0.8010%)
+  diff vs 1000-step reference at steps=50: 0.033465 (0.5045%)
+  diff vs 1000-step reference at steps=60: 0.017665 (0.2663%)
+
+=== ITM call, 0.5y, 1 div (S0=100.0 K=90.0 sigma=0.20 T=0.50 borrow=0.005 divs=1) ===
+  steps=  10  price=11.601602  time=    2.39 us
+  steps=  20  price=11.798637  time=    8.67 us
+  steps=  30  price=11.777720  time=   20.03 us
+  steps=  40  price=11.768994  time=   33.44 us
+  steps=  50  price=11.782416  time=   50.65 us
+  steps=  60  price=11.804983  time=   86.13 us
+  steps=  80  price=11.798863  time=  145.02 us
+  steps= 100  price=11.798308  time=  223.25 us
+  steps= 150  price=11.799818  time=  812.34 us
+  steps= 200  price=11.806655  time=  847.83 us
+  steps= 400  price=11.806301  time= 3020.13 us
+  steps=1000  price=11.806071  time=16509.84 us
+  (reference @ 1000 steps = 11.806071)
+  diff vs 1000-step reference at steps=40: -0.037077 (-0.3141%)
+  diff vs 1000-step reference at steps=50: -0.023655 (-0.2004%)
+  diff vs 1000-step reference at steps=60: -0.001089 (-0.0092%)
+
+=== deep OTM put, 1.5y, no div (S0=100.0 K=70.0 sigma=0.35 T=1.50 borrow=0.000 divs=0) ===
+  steps=  10  price=3.387789  time=    2.64 us
+  steps=  20  price=3.313006  time=    8.31 us
+  steps=  30  price=3.331600  time=   17.58 us
+  steps=  40  price=3.352919  time=   33.72 us
+  steps=  50  price=3.288388  time=   48.51 us
+  steps=  60  price=3.314133  time=   69.67 us
+  steps=  80  price=3.325980  time=  122.37 us
+  steps= 100  price=3.306917  time=  196.53 us
+  steps= 150  price=3.303457  time=  465.90 us
+  steps= 200  price=3.308688  time=  756.54 us
+  steps= 400  price=3.313256  time= 3260.89 us
+  steps=1000  price=3.310107  time=19682.01 us
+  (reference @ 1000 steps = 3.310107)
+  diff vs 1000-step reference at steps=40: 0.042812 (1.2934%)
+  diff vs 1000-step reference at steps=50: -0.021720 (-0.6562%)
+  diff vs 1000-step reference at steps=60: 0.004026 (0.1216%)

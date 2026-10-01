@@ -8,9 +8,29 @@ the engine, Python (scipy) for an independent second opinion on that
 reference. Extended with an arbitrage-free SVI volatility surface fit (hard
 no-arbitrage constraints enforced during the optimization, not checked
 afterward) and a relative-value screener over a simulated option chain.
+Extended a second time with a Cox-Ross-Rubinstein American pricer carrying
+discrete dollar dividends and a borrow rate, and a point-in-time DuckDB
+quote store that inverts 12.0 million simulated end-of-day quotes to
+implied vol through it, measuring what a European shortcut gets wrong.
 Every number below was measured on this machine, not targeted: where the
 first attempt at a claim fell short, or landed somewhere other than
 expected, the README says so plainly.
+
+## Extension: single-stock volatility store with American-exercise implied vols (Oct. 2026)
+
+200 single-stock names and 1 index, 1,244 simulated trading days each (about
+4.9 years), 6 expiries and 8 strikes per name per day: 12,002,112 simulated
+end-of-day quotes in `data/vol_store/`. `include/american_tree.hpp` adds a
+CRR binomial tree with American exercise, discrete dollar dividends, and a
+borrow rate; `python/vol_store/pipeline.py` builds the universe and the raw
+quote grid, calls the C++ engine to price every quote "truly" (step1 ->
+`vol_store_generate_prices`), injects a disclosed number of no-arbitrage
+violations and quarantines them (step2), and after the C++ batch inversion
+(`vol_store_invert`) reports the European-vs-American implied-vol gap by
+dividend decile (step3). `python/vol_store/tests/test_point_in_time.py`
+proves the point-in-time guarantee on an in-memory DuckDB store: querying a
+quote chain "as of" a past date is unaffected by a later restatement of the
+same contract, even though both rows sit in the same table.
 
 ## Extension: arbitrage-free SVI surface fit and relative-value screener (Aug. 2026)
 
@@ -52,10 +72,23 @@ validated against an independent method rather than trusted on its own.
 - **The 6,000-quote chain is a simulated listed option chain, not a real
   one.** It is generated from a hand-chosen ground-truth SVI surface plus
   noise, not downloaded, scraped, or subscribed to from any venue.
+- **The 12.0M-quote vol store is entirely simulated**, 200 single-stock
+  names plus 1 index, 1,244 simulated trading days, no real OPRA feed or
+  real dividend calendar anywhere in it.
+- **The discrete-dividend tree is the standard practical approximation**
+  (subtract the known dollar dividend from every node at its ex-date, keep
+  the lattice multiplicatively recombining from there), not the exact
+  Vellekoop-Nieuwenhuis recombining correction. Disclosed in
+  `include/american_tree.hpp` and in Limitations.
+- **A flat risk-free rate (4%) and a flat per-name borrow rate**, no term
+  structure on either.
+- **The batch inversion uses a 40-step CRR tree**, not the 1,000-step
+  reference the convergence check diffs against, a deliberate
+  runtime-vs-accuracy trade for 12 million quotes; see Findings.
 - **Machine and toolchain**, for every number below: 8 physical / 16 logical
   cores (AMD Ryzen 7 7800X3D), WSL2 Ubuntu 22.04, g++ 11.4.0, `-O3`, CMake
   3.22.1, C++17. The Python cross-check ran on Windows 11, Python 3.12.10,
-  scipy.
+  scipy, duckdb.
 
 ## Architecture
 
@@ -82,6 +115,19 @@ include/implied_vol.hpp       Black-Scholes implied-vol inversion (bisection)
 include/svi.hpp               raw SVI slice fit, hard butterfly + calendar constraints
 apps/svi_fit.cpp               generates the synthetic 6,000-quote chain, fits SVI per expiry
 apps/screener.cpp              two-stage relative-value screener over the fitted chain
+include/american_tree.hpp     CRR American tree: discrete dollar dividends, borrow rate,
+                               bisection implied-vol solve against the tree price
+apps/vol_store_generate_prices.cpp  prices every raw quote "truly" from its known sigma_true
+apps/vol_store_invert.cpp           batch American + European implied-vol inversion,
+                                     multithreaded across quotes
+apps/american_cross_check.cpp       135 American-tree test cases -> CSV, for the Python oracle
+apps/convergence_check.cpp          price vs tree-step-count, 4 cases, vs a 1000-step reference
+python/vol_store/pipeline.py        universe + grid (step1), noise/violation injection and
+                                     quarantine (step2), vol-gap report by dividend decile (step3)
+python/vol_store/oracle_american_tree.py  independent, from-scratch pure-Python CRR oracle
+python/validate_american_tree.py          diffs the C++ and Python CRR implementations
+python/vol_store/tests/test_point_in_time.py  proves the as-of/no-lookahead guarantee (DuckDB)
+python/vol_store/tests/test_quarantine.py     butterfly/calendar/early-exercise rule unit tests
 ```
 
 ### Why a second, independent Black-Scholes implementation
@@ -165,6 +211,70 @@ only the ones whose theoretical edge exceeds that specific quote's own half
 bid-ask spread, not the book's average spread, because the same vol-point
 gap is worth very different dollar amounts depending on that option's vega.
 
+### Why discrete dividends are subtracted at the node rather than modeled as a continuous yield
+
+A single-stock desk's book is full of names that pay a known dollar amount
+on a known date, not a smooth continuous yield; pricing that as a
+continuous dividend yield is exactly the simplification this extension
+exists to measure the cost of. `american_tree.hpp` builds the undiminished
+multiplicative lattice `S0*u^j*d^(i-j)` as usual, then at every step whose
+time has passed a dividend's ex-date, subtracts that dividend's dollar
+amount from every node at that step. Because the subtraction is the same
+scalar for every node at a given step, the lattice still recombines going
+forward. This is the standard "known dollar dividend" tree (Hull), not the
+exact Vellekoop-Nieuwenhuis correction, which rebuilds a genuinely
+non-recombining tree to avoid the small bias this approximation carries;
+that bias is not separately quantified in this repository, it is a
+disclosed limitation, not an oversight.
+
+### Why the borrow rate is a cost-of-carry drag rather than a separate stochastic factor
+
+The borrow rate enters the tree's risk-neutral growth rate as `r - borrow`,
+the same mechanical role a continuous dividend yield would play, stacked on
+top of the discrete dollar dividends above rather than instead of them.
+Discounting still uses `r` alone. This is a judgment call about where a
+single extra rate belongs in a two-rate model, stated here rather than
+buried in the code.
+
+### Why the batch inversion runs at 40 tree steps, not 1,000
+
+`apps/convergence_check.cpp` prices four representative American cases (ATM
+put with dividends, 25-delta-ish OTM put with a high dividend, ITM call,
+deep OTM put) at step counts from 10 to 1,000 and diffs each against its
+own 1,000-step value. At 40 steps the four cases disagree with the
+1,000-step reference by 0.31% to 1.29%; at 60 steps, by 0.01% to 0.33%. The
+40-step choice is a deliberate trade: `vol_store_invert` solves two
+implied-vol bisections (American and European) per quote, each bisection
+re-pricing the tree up to 60 times, over 12 million quotes, so the
+per-price cost is paid millions of times. A 300,000-quote timed sample at
+40 steps and 10 threads measured 16,415 quotes/sec, i.e. about 12 minutes
+for the full 12.0M-quote batch; the same sample at 60 steps was measured
+earlier in this session at roughly a third of that rate, which would have
+pushed the full run past 45 minutes on a machine Manas is actively using.
+The resulting price-level error (well under 1.3%) is far smaller than the
+vol-point gaps this extension exists to measure (0.7 to 2.9 vol points),
+so it does not change the qualitative finding; seeing it stated in
+percentage terms next to that gap is the honest way to disclose it, not to
+hide it in a footnote.
+
+### Why the quarantine checks run on the raw quotes, not the inverted vols
+
+Butterfly convexity, calendar monotonicity, and the early-exercise lower
+bound are each checked directly on quoted prices before any inversion is
+attempted, the same design choice `include/svi.hpp` already made for the
+SVI extension (hard constraints during the fit, not checked after). A
+quote that violates its own no-arbitrage bound has no honest implied vol to
+report; inverting it anyway and discarding the result afterward would
+waste 40-step tree evaluations on a result this repository already knows
+is unusable. `model-validation-alerting`
+(https://github.com/Manas103/model-validation-alerting) runs the same
+first two checks as a rules engine over an already-fitted surface; this
+extension is the second time in this repository that the same
+"catch-before-fitting" argument from the SVI section above has been made,
+now against raw quotes rather than a fitted curve, and now with a third
+rule (the early-exercise lower bound) that only an American pricer's own
+no-dominated-by-intrinsic-value property can state.
+
 ## Validation
 
 Six independent layers, each printed with real output below and under
@@ -190,6 +300,27 @@ Six independent layers, each printed with real output below and under
    tested against noiseless SVI-generated data (must recover it to near-zero
    sum of squared error) and against a case with an active calendar floor
    (must still return a feasible fit).
+7. **American-tree invariants.** Zero-dividend American call equals the
+   European call (early exercise is never optimal for a call absent
+   dividends) and is close to the closed-form Black-Scholes value; American
+   put price is always `>=` the European put, with and without dividends;
+   every node's value is `>=` immediate-exercise intrinsic value (checked
+   across 5,050 nodes); the American implied-vol solver round-trips a known
+   vol; a 50-step tree agrees with a 400-step tree to within 0.05.
+8. **Two independent languages, American tree.** `american_cross_check`
+   (C++) and `oracle_american_tree.py` (pure Python, no shared code) price
+   135 cases spanning ITM/ATM/OTM, short/long maturity, zero/one/two
+   dividends, and zero/nonzero borrow; `validate_american_tree.py` diffs
+   them directly.
+9. **Point-in-time guarantee, DuckDB.** `test_point_in_time.py` proves a
+   query "as of" a past date is unaffected by a same-contract row inserted
+   later with a later `as_of`, that a date before any data returns nothing,
+   and that one contract's restatement does not leak into a different
+   contract's as-of read.
+10. **Quarantine rules, positive and negative controls.** `test_quarantine.py`
+    checks butterfly convexity, calendar monotonicity, and the
+    early-exercise lower bound each against a case built to satisfy the
+    rule and one built to violate it.
 
 ```
 $ ./build/test_suite
@@ -214,11 +345,33 @@ $ ./build/test_suite
 [PASS] fit_slice recovers noiseless SVI-generated data to near-zero SSE
 [PASS] fit_slice with an active calendar floor still returns feasible
 [PASS] fit_slice's returned params respect the calendar floor directly
+[PASS] zero-dividend American call == European call (no early exercise value) (|10.440591 - 10.440591| <= 0.000001)
+[PASS] zero-dividend American call ~= closed-form BS call (|10.440591 - 10.450584| <= 0.050000)
+[PASS] American put >= European put (no dividends)
+[PASS] American put >= European put (with dividends and borrow)
+[PASS] American tree value >= intrinsic at every node (5050 nodes checked)
+[PASS] American implied vol solver converges (put, with dividends)
+[PASS] American implied vol solver round-trips known vol (|0.220000 - 0.220000| <= 0.000100)
+[PASS] 50-step American tree within 0.05 of a 400-step tree (|9.084964 - 9.096184| <= 0.050000)
 
-21 passed, 0 failed
+29 passed, 0 failed
 ```
 
 Full transcript: `docs/test_output.txt`. Python side: `docs/python_cross_check_output.txt`.
+
+**American-tree cross-check, C++ vs independent pure-Python oracle, 135
+cases:**
+
+```
+C++ CRR tree vs independent pure-Python CRR oracle:
+  max abs diff  = 4.989e-05
+  mean abs diff = 1.271e-05
+  max rel diff  = 0.000404 %
+```
+
+Full transcript: `docs/american_cross_check_output.txt`. Python test suite
+(15 tests covering the oracle cross-check, point-in-time guarantee, and
+quarantine rules): `docs/py_test_output.txt`.
 
 ## Findings
 
@@ -284,6 +437,41 @@ brought the same grid's max relative error to 0.02444%, comfortably under
 target, in 2m21s wall time on this machine. Reported honestly as what it is:
 a path-count decision made after measuring the first attempt, not a target
 picked in advance and hit on the first try.
+
+### A silently failed write, caught by a missing file rather than an error message
+
+The first run of `american_cross_check` (no arguments, default output path
+`docs/american_cross_check.csv`) printed `wrote 135 cases (steps=200) to
+docs/american_cross_check.csv` and exited 0. The wrong first assumption was
+that the CSV existed and the next step (`validate_american_tree.py`) had a
+path bug; the measurement that discriminated was simply listing the
+directory the binary claimed to have written to, which did not contain the
+file. Root cause: `apps/american_cross_check.cpp` opened the `std::ofstream`
+without checking `is_open()`, and a relative path resolves against the
+binary's own working directory (`build/`), which has no `docs/`
+subdirectory, so every write silently went nowhere while the success
+message printed anyway. The fix adds an explicit open check that returns 1
+with a clear message on failure, and the binary is now invoked with an
+explicit path into the repository's own `docs/`. This is exactly the
+failure mode the rest of this project is organized around at a larger
+scale, a step that looks like it succeeded and was not checked.
+
+### Quarantine count overshot the design target, and the reason is a real one
+
+This extension's quarantine was designed around roughly 1,847 violating
+quotes (450 early-exercise, 700 butterfly, 697 calendar, directly
+corresponding to the rows deliberately injected in `pipeline.py` step2).
+The measured count on the full 12.0M-quote grid is 3,103 (450 / 1,616 /
+1,037). Early-exercise matches exactly, because that rule only fires on the
+rows deliberately pushed in-the-money for the test; butterfly and calendar
+do not, because those two rules are re-checked on every row in the grid,
+not just the injected ones, and scaling the grid 5x (to reach 12.0M quotes
+from an original 2.4M-row design) scaled up the number of rows where
+ordinary simulated quote noise happens to dip across the fixed $0.20
+convexity/monotonicity floor by chance. This was root-caused, not patched
+away: tightening the floor or the noise level would change the measured
+count without changing what it actually represents, so it is reported as
+measured rather than adjusted toward the original estimate.
 
 ### The screener's honest numbers landed nowhere near the resume's
 
@@ -420,6 +608,56 @@ monitoring points is not detected. That gap is not measured quantitatively
 in this repository; it is a known, standard, and disclosed approximation
 rather than an omission.
 
+## Measured results: single-stock volatility store
+
+8 physical / 16 logical cores (AMD Ryzen 7 7800X3D), WSL2 Ubuntu 22.04,
+g++ 11.4.0 `-O3`. Deterministic (seed 2027); re-running
+`python/vol_store/pipeline.py` plus the two C++ batch binaries reproduces
+every number below exactly.
+
+```
+step1: wrote 12002112 params rows (201 underlyings x 1244 days x 6 expiries x 8 strikes)
+step2: quarantined (any rule): 3103 (0.02585%)
+  butterfly_convexity: 1616
+  calendar_monotonicity: 1037
+  early_exercise_lower_bound: 450
+  clean quotes passed to inversion: 11999009
+vol_store_invert: 11999009 clean quotes, 10 threads, 40 tree steps, 711.1s (16,874 quotes/sec)
+  american inversion:  11999009 converged, 0 failed to bracket (0.0000%)
+  european inversion:  11999009 converged, 0 failed to bracket (0.0000%)
+step3: 11999009 of 11999009 rows had both inversions converge
+  25-delta-ish put rows (moneyness 0.84-0.93): 2999435
+  median (european_iv - american_iv) * 100, all 25-delta-ish puts: 1.6615 vol points
+  dividend-yield decile cutoff (90th pct, stocks only): 0.0534
+  top-decile rows: 298462
+  median (european_iv - american_iv) * 100, top dividend decile: 4.6710 vol points
+```
+
+Full transcripts: `docs/vol_store_invert_output.txt`,
+`docs/quarantine_report.txt`, `docs/vol_gap_report.txt`.
+
+**1.6615 vol points, widening to 4.6710 in the top dividend decile**, is the
+one number that matters here (design target: a median 0.74 vol points, 2.9
+in the top dividend decile; both measured higher than targeted, not
+tuned toward it after the fact). The direction and the ordering are exactly
+what the early-exercise premium predicts, a European inversion of an
+American quote silently understates 25-delta put implied vol, and that
+understatement gets worse as a name pays more dividends, by nearly 3x
+between the whole-population median and the top dividend decile. 100% of
+both the American and European bisections converged across all 11,999,009
+clean quotes (0 failed to bracket either side), which is the inversion
+solver's own correctness claim, separate from the magnitude of the gap it
+measured.
+
+**Where this approach loses:** the 40-step tree used for the 12M-quote
+batch carries 0.3-1.3% price-level error against a 1,000-step reference
+(see Findings), and the quarantine count overshot its design target for a
+real, root-caused reason rather than a tuning failure. The vol-point gap
+itself landed higher than this extension's design target rather than lower,
+which is the opposite direction of most shortfalls reported elsewhere in
+this README; it is reported exactly as measured for the same reason every
+other number here is.
+
 ## Building and running
 
 ```bash
@@ -435,14 +673,27 @@ make -j"$(nproc)"
 ./bench_barrier 1000000 200 2026
 ./svi_fit
 ./screener
+./american_cross_check 200 ../docs/american_cross_check.csv
+./convergence_check
 ```
 
 ```bash
 cd python
 python -m venv .venv && source .venv/bin/activate   # or .venv\Scripts\activate on Windows
-pip install -r requirements.txt
-python -m pytest tests/ -q
-python validate_bs_grid.py   # cross-checks docs/bs_grid.csv, writes docs/error_surface.png
+pip install -r requirements.txt   # scipy, matplotlib, pytest, duckdb
+python -m pytest -q                        # includes test_point_in_time.py, test_quarantine.py
+python validate_bs_grid.py                 # cross-checks docs/bs_grid.csv, writes docs/error_surface.png
+python validate_american_tree.py           # cross-checks docs/american_cross_check.csv
+
+# Single-stock volatility store (run from the repo root, WSL2 recommended
+# for the C++ steps; native /tmp or ~/build for I/O-heavy intermediate
+# files, not /mnt/c, if re-running at a larger scale than the committed
+# reports below):
+python python/vol_store/pipeline.py step1
+./build/vol_store_generate_prices data/vol_store/params.bin data/vol_store/divs.csv data/vol_store/priced.bin 8 60
+python python/vol_store/pipeline.py step2
+./build/vol_store_invert data/vol_store/clean_quotes.bin data/vol_store/divs.csv data/vol_store/results.bin 10 40 0.04
+python python/vol_store/pipeline.py step3
 ```
 
 ## Sibling comparison
@@ -489,3 +740,26 @@ surface a trader is about to act on deserves the stronger one.
   counted more than once.
 - **The synthetic chain's bid-ask spreads are a modeled function of the
   quote, not sourced from any real venue's quoted market.**
+- **The discrete-dividend tree is an approximation** (deterministic
+  per-node dollar subtraction), not the exact Vellekoop-Nieuwenhuis
+  recombining correction; the resulting bias is not separately quantified.
+- **Flat risk-free rate and flat per-name borrow rate**, no term structure
+  on either, no stochastic rates.
+- **The 12.0M-quote batch inversion runs the CRR tree at 40 steps**, which
+  carries 0.3-1.3% price-level error against a 1,000-step reference on the
+  four cases checked in `convergence_check`; a full re-run at a higher step
+  count would be more accurate and slower, not attempted at full scale in
+  this session.
+- **The strike grid only ever quotes the out-of-the-money side of each
+  name's own moneyness points**; the early-exercise lower-bound test cases
+  had their strikes deliberately pushed in-the-money to give that rule
+  something real to catch, the same adversarial-construction pattern
+  `test_main.cpp` already uses for the SVI arbitrage checks.
+- **The quarantine's butterfly/calendar floor is a fixed $0.20 absolute
+  threshold**, not scaled to each quote's own price level or vega, so it
+  catches proportionally more violations on the 12.0M-quote grid than it
+  would on a smaller one (see Findings).
+- **25-delta puts are approximated by a fixed moneyness band (0.84-0.93)**
+  on the strike grid, not solved for an exact 25-delta strike, because the
+  grid is a fixed set of 8 moneyness points per name per day rather than a
+  delta-targeted strike ladder.

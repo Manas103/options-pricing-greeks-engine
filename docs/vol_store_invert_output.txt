@@ -1,0 +1,11 @@
+
+real	11m56.352s
+user	116m53.705s
+sys	0m1.503s
+tree_steps=40
+wall time: 711.089 s  (16874 quotes/sec)
+american inversion:  11999009 converged, 0 failed to bracket (0.0000%)
+european inversion:  11999009 converged, 0 failed to bracket (0.0000%)
+results written to results.bin (527956396 bytes)
+
+[exited with code 0]

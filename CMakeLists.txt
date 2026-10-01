@@ -32,5 +32,16 @@ add_executable(svi_fit apps/svi_fit.cpp)
 
 add_executable(screener apps/screener.cpp)
 
+add_executable(american_cross_check apps/american_cross_check.cpp)
+
+add_executable(convergence_check apps/convergence_check.cpp)
+target_link_libraries(convergence_check PRIVATE Threads::Threads)
+
+add_executable(vol_store_invert apps/vol_store_invert.cpp)
+target_link_libraries(vol_store_invert PRIVATE Threads::Threads)
+
+add_executable(vol_store_generate_prices apps/vol_store_generate_prices.cpp)
+target_link_libraries(vol_store_generate_prices PRIVATE Threads::Threads)
+
 enable_testing()
 add_test(NAME hand_rolled_suite COMMAND test_suite)

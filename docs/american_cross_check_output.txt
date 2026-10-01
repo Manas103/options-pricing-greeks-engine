@@ -1,0 +1,5 @@
+loaded 135 American-tree cross-check cases from C:\Users\Manas\Downloads\Total Job Application process flow\projects\options-pricing-greeks-engine\docs\american_cross_check.csv
+C++ CRR tree vs independent pure-Python CRR oracle:
+  max abs diff  = 4.989e-05
+  mean abs diff = 1.271e-05
+  max rel diff  = 0.000404 %

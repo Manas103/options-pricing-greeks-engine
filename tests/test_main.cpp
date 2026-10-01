@@ -26,6 +26,7 @@
 #include <string>
 #include <vector>
 
+#include "american_tree.hpp"
 #include "barrier.hpp"
 #include "black_scholes.hpp"
 #include "implied_vol.hpp"
@@ -204,6 +205,76 @@ int main() {
         check(fr.feasible, "fit_slice with an active calendar floor still returns feasible");
         check(svi::respects_calendar_floor(fr.params, grid, floor_w),
               "fit_slice's returned params respect the calendar floor directly");
+    }
+
+    // 15. Zero-dividend, zero-borrow American call == European call (early
+    // exercise of a call is never optimal absent dividends), and both land
+    // close to the closed-form Black-Scholes call at the same parameters.
+    {
+        crr::Workspace ws(200);
+        crr::TreeParams p{100.0, 100.0, 0.05, 0.0, 0.20, 1.0, 200, nullptr};
+        double american = ws.price(p, true, crr::Exercise::American);
+        double european = ws.price(p, true, crr::Exercise::European);
+        bs::BSParams bsp{p.S0, p.K, p.r, p.sigma, p.T};
+        double closed = bs::call_price(bsp);
+        check_close(american, european, 1e-6,
+                    "zero-dividend American call == European call (no early exercise value)");
+        check_close(american, closed, 0.05, "zero-dividend American call ~= closed-form BS call");
+    }
+
+    // 16. American put >= European put, always, with or without dividends
+    // and borrow (the early-exercise premium is never negative).
+    {
+        crr::Workspace ws(200);
+        std::vector<crr::DiscreteDividend> divs = {{0.25, 1.5}, {0.75, 1.5}};
+        crr::TreeParams no_div{100.0, 100.0, 0.05, 0.0, 0.25, 1.0, 200, nullptr};
+        crr::TreeParams with_div{100.0, 100.0, 0.05, 0.01, 0.25, 1.0, 200, &divs};
+        double am_no_div = ws.price(no_div, false, crr::Exercise::American);
+        double eu_no_div = ws.price(no_div, false, crr::Exercise::European);
+        double am_div = ws.price(with_div, false, crr::Exercise::American);
+        double eu_div = ws.price(with_div, false, crr::Exercise::European);
+        check(am_no_div >= eu_no_div - 1e-9, "American put >= European put (no dividends)");
+        check(am_div >= eu_div - 1e-9, "American put >= European put (with dividends and borrow)");
+    }
+
+    // 17. Early-exercise lower bound holds at EVERY node by construction,
+    // not just at the root, for an American option with dividends.
+    {
+        crr::Workspace ws(100);
+        std::vector<crr::DiscreteDividend> divs = {{0.3, 2.0}, {0.8, 2.0}};
+        crr::TreeParams p{100.0, 95.0, 0.04, 0.015, 0.30, 1.0, 100, &divs};
+        crr::Workspace::NodeCheck nc = ws.check_intrinsic_bound(p, false);
+        check(nc.all_nodes_ge_intrinsic,
+              "American tree value >= intrinsic at every node (" +
+                  std::to_string(nc.nodes_checked) + " nodes checked)");
+    }
+
+    // 18. Implied-vol round trip through the American tree itself: generate
+    // a price from a known vol (with dividends and borrow), invert with
+    // solve_implied_vol, recover the known vol.
+    {
+        crr::Workspace ws(80);
+        std::vector<crr::DiscreteDividend> divs = {{0.4, 1.2}};
+        crr::TreeParams p{100.0, 90.0, 0.03, 0.008, 0.22, 0.9, 80, &divs};
+        double price = ws.price(p, false, crr::Exercise::American);
+        crr::ImpliedVolResult iv =
+            crr::solve_implied_vol(ws, p, false, crr::Exercise::American, price);
+        check(iv.converged, "American implied vol solver converges (put, with dividends)");
+        check_close(iv.vol, p.sigma, 1e-4, "American implied vol solver round-trips known vol");
+    }
+
+    // 19. Step-count convergence sanity: 50 steps should already be close to
+    // a much finer 400-step tree for a representative case (see
+    // docs/convergence_check_output.txt for the full sweep that justifies
+    // the 40-60 step choice used by the batch inversion).
+    {
+        crr::Workspace ws(400);
+        std::vector<crr::DiscreteDividend> divs = {{0.3, 1.0}, {0.9, 1.0}};
+        crr::TreeParams p{100.0, 97.0, 0.04, 0.01, 0.28, 1.0, 50, &divs};
+        double coarse = ws.price(p, false, crr::Exercise::American);
+        p.steps = 400;
+        double fine = ws.price(p, false, crr::Exercise::American);
+        check_close(coarse, fine, 0.05, "50-step American tree within 0.05 of a 400-step tree");
     }
 
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);

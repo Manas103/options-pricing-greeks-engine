@@ -1,0 +1,6 @@
+rows with both inversions converged: 11999009
+25-delta-ish put rows (moneyness 0.84-0.93): 2999435
+median (european_iv - american_iv) * 100, all 25-delta-ish puts: 1.6615 vol points
+dividend-yield decile cutoff (90th pct, stocks only): 0.0534
+top-decile rows (25-delta-ish puts, stocks, top div yield decile): 298462
+median (european_iv - american_iv) * 100, top dividend decile: 4.6710 vol points
