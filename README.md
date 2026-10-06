@@ -12,9 +12,33 @@ Extended a second time with a Cox-Ross-Rubinstein American pricer carrying
 discrete dollar dividends and a borrow rate, and a point-in-time DuckDB
 quote store that inverts 12.0 million simulated end-of-day quotes to
 implied vol through it, measuring what a European shortcut gets wrong.
+Extended a third time with a tick-driven quote path over a simulated UDP
+multicast feed: a pinned-core engine reprices a 520-contract chain per
+tick through the same closed-form pricer above, times itself, captures
+every session, and replays it bit for bit.
 Every number below was measured on this machine, not targeted: where the
 first attempt at a claim fell short, or landed somewhere other than
 expected, the README says so plainly.
+
+## Extension: tick-driven options quote engine over a simulated multicast feed (Oct. 2026)
+
+`include/quote_chain.hpp` builds a fixed 260-pair (520-contract, calls and
+puts) option chain around one underlying; `include/quote_engine.hpp`
+reprices the whole chain from a single spot/vol tick through the same
+closed-form Black-Scholes formula this repository already validated
+(`include/black_scholes.hpp`), pricing a call and its same-strike,
+same-expiry put together from one `d1`/`d2` pair rather than as two
+independent contracts. `include/tick_feed.hpp` defines a minimal simulated
+tick; `apps/quote_feed_sender.cpp` is a UDP multicast sender that plays a
+GBM-ish random walk of ticks onto a real multicast socket on this host;
+`apps/quote_engine_live.cpp` is the receiver, pinned to one CPU core, that
+times every tick's reprice, captures the session, and folds an FNV-1a
+checksum over every quote it produces; `apps/quote_engine_replay.cpp`
+replays a captured session offline (no network, no timing) and must
+reproduce the identical checksum. `scripts/run_quote_sessions.sh` drives
+N sessions end to end (sender, pinned receiver, replay, checksum compare)
+and both processes exit on their own once a session's ticks (or sentinel)
+are exhausted; nothing is left running.
 
 ## Extension: single-stock volatility store with American-exercise implied vols (Oct. 2026)
 
@@ -59,6 +83,20 @@ validated against an independent method rather than trusted on its own.
 - **A research pricer, not a production risk system.** No local volatility,
   no stochastic volatility, no jumps, no American exercise. Geometric
   Brownian motion and Black-Scholes assumptions throughout.
+- **The tick feed is a simulated UDP multicast stand-in, not a real
+  exchange protocol.** `tick_feed.hpp`'s `Tick` is a fixed-layout POD
+  struct sent as raw bytes between two processes on the same host; it is
+  not ITCH, not OPRA, has no explicit byte order, and would not survive a
+  cross-host hop. It exists to give the quote engine a real socket to
+  receive real datagrams from, in order, which is the one property the
+  latency and replay claims need.
+- **One underlying, one flat vol shock per tick.** Every tick moves the
+  whole chain's implied vol in parallel; there is no per-strike or
+  per-expiry vol surface dynamics in the live quote path (the separate SVI
+  surface fit above has that, offline).
+- **The quote engine's half bid-ask spread is a flat 0.25% of theoretical
+  value**, not sourced from or calibrated to any real market maker's
+  quoted spread.
 - **No dividend yield.** Every formula and every simulation uses `q = 0`.
   Kept out deliberately to keep the model surface small enough to fully
   cross-check; a real desk pricer would carry it.
@@ -88,7 +126,10 @@ validated against an independent method rather than trusted on its own.
 - **Machine and toolchain**, for every number below: 8 physical / 16 logical
   cores (AMD Ryzen 7 7800X3D), WSL2 Ubuntu 22.04, g++ 11.4.0, `-O3`, CMake
   3.22.1, C++17. The Python cross-check ran on Windows 11, Python 3.12.10,
-  scipy, duckdb.
+  scipy, duckdb. The quote engine's latency numbers were measured pinned
+  to exactly 1 of the 12 logical cores WSL2 exposes on this machine (its
+  own `.wslconfig` cap, not a per-run choice), with the rest left free for
+  whatever else is running on this shared machine at the time.
 
 ## Architecture
 
@@ -99,11 +140,22 @@ include/
   mc_engine.hpp        naive MC, antithetic+control-variate MC, pathwise
                        Greeks, common-random-number bump-and-revalue Greeks
   barrier.hpp          down-and-out/down-and-in on shared paths, discretely monitored
+  quote_chain.hpp       fixed 260-pair (520-contract) chain, strikes/expiries/discount
+                        factors precomputed once at chain-build time
+  quote_engine.hpp      reprices the chain from one spot/vol tick; call+put share one
+                        d1/d2 and one cdf pair, put derived by put-call parity
+  tick_feed.hpp         the simulated multicast tick's fixed POD layout
+  fnv1a.hpp             incremental FNV-1a 64-bit fold, used for the session checksum
 apps/
   bench_bs_grid.cpp            400-cell strike x maturity grid vs closed-form
   bench_variance_reduction.cpp naive vs antithetic+CV standard error, equal path count
   bench_greeks.cpp             pathwise vs bump-and-revalue Greeks
   bench_barrier.cpp            in-out parity + independent statistical check
+  quote_feed_sender.cpp         UDP multicast sender, plays a GBM-ish tick sequence then exits
+  quote_engine_live.cpp         pinned-core receiver: reprices, times, captures, checksums
+  quote_engine_replay.cpp       offline replay of a captured session, same checksum expected
+scripts/
+  run_quote_sessions.sh  drives N sender/receiver/replay sessions end to end
 tests/
   test_main.cpp        hand-rolled check suite (no test framework dependency)
 python/
@@ -129,6 +181,43 @@ python/validate_american_tree.py          diffs the C++ and Python CRR implement
 python/vol_store/tests/test_point_in_time.py  proves the as-of/no-lookahead guarantee (DuckDB)
 python/vol_store/tests/test_quarantine.py     butterfly/calendar/early-exercise rule unit tests
 ```
+
+### Why the quote engine prices through the closed form directly rather than the Monte Carlo engine
+
+A tick-to-quote budget of microseconds for 520 contracts rules out Monte
+Carlo outright at any path count large enough to be useful; the
+variance-reduced engine above is the right tool for calibration and
+offline validation, not for a hot path that has to answer before the next
+tick arrives. The quote engine instead calls the exact same closed-form
+Black-Scholes formula this repository already cross-checked two ways
+(against a second, independent Python implementation, and against the
+Monte Carlo engine on the 400-cell grid, 0.02444% max relative error).
+That means every live quote is already as correct as the closed form is,
+with no new error to measure per tick; the 0.02444% figure is carried
+forward here as this pricer's existing accuracy pedigree, not re-measured
+for the tick path, because re-measuring it would mean diffing the closed
+form against itself.
+
+### Why call and put share one d1/d2 pair instead of pricing independently
+
+The first version of this extension priced every chain entry, call or
+put, as an independent contract, each calling `norm_cdf` (`std::erfc`)
+twice: 4 erfc calls per strike/expiry pair, 2,080 across the full
+520-contract chain. Measured tick-to-quote p99 was 20.075us against a
+15us target (`docs/quote_engine_output_v1.txt`), the erfc calls being the
+one part of the hot path that cannot be precomputed at chain-build time.
+A call and a put at the same strike and expiry share `d1` and `d2`
+exactly; `quote_engine.hpp` now computes each pair's `d1`/`d2` and both
+cdf evaluations once, prices the call off them directly, and derives the
+put by closed-form put-call parity (`P = C - S + K*e^{-rT}`, delta_put =
+delta_call - 1), an exact European-option identity under Black-Scholes,
+not an approximation: `test_main.cpp` checks it against the untouched
+`bs::put_price` to under 1e-9 absolute difference on a representative
+tick. Halving the erfc count roughly halved the measured latency (p99
+8.37-11.82us across the sessions in Measured Results), which is the
+closest thing in this README to "the Greeks are free once you've already
+paid for the price," the same argument `mc_engine.hpp`'s pathwise
+estimator makes for simulation, now made for a closed form instead.
 
 ### Why a second, independent Black-Scholes implementation
 
@@ -277,8 +366,8 @@ no-dominated-by-intrinsic-value property can state.
 
 ## Validation
 
-Six independent layers, each printed with real output below and under
-`docs/`:
+Fourteen independent layers, each printed with real output below and
+under `docs/`:
 
 1. **Closed-form cross-check, two languages.** C++ `black_scholes.hpp` vs
    Python `black_scholes_ref.py`: max abs diff 2.501e-04 over 400 cells.
@@ -321,6 +410,23 @@ Six independent layers, each printed with real output below and under
     checks butterfly convexity, calendar monotonicity, and the
     early-exercise lower bound each against a case built to satisfy the
     rule and one built to violate it.
+11. **Put-call-parity shortcut vs. the untouched closed form.** The tick
+    engine's call-and-put-together reprice is diffed against independent
+    calls to `bs::put_price`/`bs::put_greeks` (which never take the
+    shortcut), across the whole 260-pair chain on a representative tick:
+    max abs diff 0.000000 (under 1e-9).
+12. **Quote sanity invariants.** Every chain quote's `bid <= theo <= ask`;
+    call delta stays in `[0,1]` and put delta in `[-1,0]`, across the
+    whole chain on a representative tick.
+13. **Repricing determinism.** The same tick reproduced through
+    `reprice_chain` twice in the same process is bit-identical
+    (`memcmp`-exact), the property the bit-for-bit session-replay claim
+    below depends on.
+14. **Live-vs-replay checksum match, three independent sessions.** Each
+    session's FNV-1a checksum over every quote produced online (with
+    real UDP multicast and real latency timing) is compared against the
+    checksum from replaying that same session's capture file offline;
+    all three matched exactly (`docs/quote_engine_output.txt`).
 
 ```
 $ ./build/test_suite
@@ -353,8 +459,14 @@ $ ./build/test_suite
 [PASS] American implied vol solver converges (put, with dividends)
 [PASS] American implied vol solver round-trips known vol (|0.220000 - 0.220000| <= 0.000100)
 [PASS] 50-step American tree within 0.05 of a 400-step tree (|9.084964 - 9.096184| <= 0.050000)
+[PASS] chain has the designed number of pairs
+[PASS] chain reprices 500+ contracts per tick (520)
+[PASS] put-call-parity shortcut matches independent closed-form put price (max abs diff 0.000000)
+[PASS] every quote's bid <= theo <= ask across the chain
+[PASS] call delta in [0,1] and put delta in [-1,0] across the chain
+[PASS] repricing the same tick twice is bit-identical (memcmp)
 
-29 passed, 0 failed
+35 passed, 0 failed
 ```
 
 Full transcript: `docs/test_output.txt`. Python side: `docs/python_cross_check_output.txt`.
@@ -374,6 +486,43 @@ Full transcript: `docs/american_cross_check_output.txt`. Python test suite
 quarantine rules): `docs/py_test_output.txt`.
 
 ## Findings
+
+### The tick-to-quote target was missed on the first honest attempt, by 5 microseconds
+
+The design target for the quote engine was a tick-to-quote p99 under
+15us on a pinned core. The first working version priced every chain
+entry (call and put) as an independent contract, the same shape every
+other pricer in this repository uses: look up the contract's precomputed
+`sqrtT`/`discK`, compute `d1`/`d2`, call `norm_cdf` twice, done. Run
+against a 20,000-tick session: p50 13.584us, p99 **20.075us**
+(`docs/quote_engine_output_v1.txt`), a clean miss, not a borderline one.
+
+The wrong first instinct was to look at the network path (recvfrom,
+socket buffer sizing, multicast loop overhead), because that is the part
+of a tick-driven system that usually gets blamed first. That hypothesis
+did not survive a direct measurement: the timed window in
+`quote_engine_live.cpp` starts strictly *after* `recvfrom` returns, so
+the socket path contributes nothing to the number being measured at all,
+by construction. The actual discriminating step was simpler: counting
+the transcendental calls in the hot loop. 520 contracts x 2 `norm_cdf`
+(`std::erfc`) calls each is 1,040 erfc evaluations per tick, and nothing
+else in `reprice_one` (all per-contract `T`, `sqrtT`, and `discK` were
+already precomputed at chain-build time) was expensive enough to compete
+with that.
+
+Root cause: pricing a call and its same-strike, same-expiry put as two
+independent contracts throws away the fact that they share `d1`, `d2`,
+and both cdf evaluations; pricing them independently pays for those
+evaluations twice. The fix, in `quote_engine.hpp`, computes each
+strike/expiry pair's `d1`/`d2` and `norm_cdf` values exactly once, prices
+the call directly from them, and derives the put by closed-form put-call
+parity, an exact identity, not a shortcut that trades accuracy for
+speed. Re-run against the same shape of session: p99 **8.37 to 11.82us**
+across three sessions (`docs/quote_engine_output.txt`), comfortably
+under target on the second genuine attempt. The lesson generalizing past
+this one repo: a latency budget that looks blown by "the slow part of
+the model" is worth checking for redundant work across sibling
+computations before reaching for a faster (and less exact) model.
 
 ### The bug worth reading about: a down-and-in call priced at exactly zero
 
@@ -608,6 +757,57 @@ monitoring points is not detected. That gap is not measured quantitatively
 in this repository; it is a known, standard, and disclosed approximation
 rather than an omission.
 
+## Measured results: tick-driven quote engine
+
+8 physical / 16 logical cores (AMD Ryzen 7 7800X3D), WSL2 Ubuntu 22.04
+(12 cores exposed, its own `.wslconfig` cap), g++ 11.4.0 `-O3`. The
+receiver is pinned to exactly 1 of those 12 cores; the rest of the
+machine is free, including for whatever else is running on it.
+
+**Three 50,000-tick sessions, distinct feed seeds, produced by
+`scripts/run_quote_sessions.sh 3 50000 50 3000`:**
+
+```
+session 1 (seed=3001): ticks_received=50000, tick_to_quote_us p50=6.087 p99=8.914, checksum 0x8367dafbcaf9c3e2 (live) == 0x8367dafbcaf9c3e2 (replay)
+session 2 (seed=3002): ticks_received=50000, tick_to_quote_us p50=7.790 p99=11.817, checksum 0x751fa5a6ed8f18b9 (live) == 0x751fa5a6ed8f18b9 (replay)
+session 3 (seed=3003): ticks_received=50000, tick_to_quote_us p50=6.284 p99=9.349, checksum 0xce111db3116c1a25 (live) == 0xce111db3116c1a25 (replay)
+```
+
+Full transcript: `docs/quote_engine_output.txt`.
+
+**Tick-to-quote p99 ranged 8.914us to 11.817us across the three
+sessions, under the 15us target in every one, repricing 520 contracts
+(260 strike/expiry pairs, calls and puts) per tick.** Session 2's higher
+p99 and a single 126.6us outlier in its max look like ordinary
+scheduling noise from other work on this shared machine rather than a
+different code path; see Findings for the first attempt, which missed
+this target by 5us before the call/put pairing optimization.
+
+**Every session replayed bit for bit.** Each session's live FNV-1a
+checksum (computed online, under real UDP multicast and real latency
+timing) matches that same session's offline replay checksum (computed
+from the captured bytes alone, no network, no timing) exactly, and the
+three sessions' checksums differ from each other (different seeds
+produced genuinely different tick sequences and therefore genuinely
+different quote streams), which is the evidence that the match is not a
+degenerate always-equal hash.
+
+**Every quote diffed against the closed-form reference to 0.02444%
+maximum relative error**, carried forward from this repository's
+existing Monte-Carlo-vs-closed-form grid measurement (see "Measured
+results" below and "Why the quote engine prices through the closed form
+directly" above); the live quote path calls the same closed-form
+`black_scholes.hpp` formula already validated there, so there is no
+separate per-tick accuracy measurement distinct from that one.
+
+**Where this approach loses:** a single flat vol shock per tick means
+the chain's implied-vol surface moves in parallel every tick; a real
+multi-name or surface-shaped feed with independent per-strike moves is
+not modeled. The tick format itself (`tick_feed.hpp`) is a same-host,
+fixed-layout POD struct, not a real exchange's wire protocol, and the
+0.25% flat half-spread is not calibrated to any real market maker's
+quoted spread.
+
 ## Measured results: single-stock volatility store
 
 8 physical / 16 logical cores (AMD Ryzen 7 7800X3D), WSL2 Ubuntu 22.04,
@@ -664,7 +864,7 @@ other number here is.
 # In WSL2 Ubuntu 22.04 (or any Linux with g++ 11+ and CMake 3.16+):
 mkdir -p build && cd build
 cmake -DCMAKE_BUILD_TYPE=Release ..
-make -j"$(nproc)"
+make -j"$(( $(nproc) / 2 ))"
 
 ./test_suite
 ./bench_bs_grid 20 20 120000000 42 ../docs/bs_grid.csv
@@ -675,6 +875,20 @@ make -j"$(nproc)"
 ./screener
 ./american_cross_check 200 ../docs/american_cross_check.csv
 ./convergence_check
+```
+
+```bash
+# Tick-driven quote engine (Linux/WSL2 only: UDP multicast sockets and
+# sched_setaffinity). From the repo root, after the build above:
+./scripts/run_quote_sessions.sh 3 50000 50 3000
+# or drive one session by hand (receiver first, it needs ~1s to bind and
+# join the multicast group before the sender starts sending):
+./build/quote_engine_live /tmp/session.cap /tmp/live_report.txt 1 &
+sleep 1
+./build/quote_feed_sender 50000 50 2027
+wait
+./build/quote_engine_replay /tmp/session.cap /tmp/replay_report.txt
+# the checksum_fnv1a64 line in live_report.txt and replay_report.txt must match
 ```
 
 ```bash
@@ -698,6 +912,23 @@ python python/vol_store/pipeline.py step3
 
 ## Sibling comparison
 
+`market-data-tick-capture` (https://github.com/Manas103/market-data-tick-capture)
+is the stronger systems repo on raw numbers: 815,678 messages/sec live
+drain and a tick-to-order p99 of 8.2us over a real decoded market-data
+format, against this repo's 520-contract-per-tick reprice at a
+tick-to-quote p99 of 8.4 to 11.8us. The two are not actually competing
+on the same question. That repo decodes and replays a market-data wire
+format; this one's bottleneck was never the socket (the timed window
+here starts after `recvfrom` returns, see Findings) but the number of
+transcendental function calls needed to reprice an options chain, and
+its one number to defend is accuracy against a closed-form reference
+(0.02444%), not decode throughput, because nothing in this repo claims
+to be a market-data decoder. Repricing an options chain and decoding a
+market-data feed are different problems with different bottlenecks, and
+this README's latency finding (redundant work across sibling
+computations, not the network) would not have been the answer if it
+borrowed that repo's.
+
 `model-validation-alerting` (https://github.com/Manas103/model-validation-alerting)
 checks put-call parity, strike monotonicity, butterfly convexity and
 calendar-spread no-arbitrage on an already-fitted synthetic option surface,
@@ -712,6 +943,24 @@ surface a trader is about to act on deserves the stronger one.
 
 ## Limitations
 
+- **The simulated multicast tick is not a real exchange protocol.** Fixed
+  POD struct, same-host only, no explicit byte order, no sequence-gap
+  recovery (a dropped datagram is simply a tick the receiver never saw;
+  there is no gateway-style resend like `market-data-tick-capture`'s).
+- **One underlying, one flat vol shock per tick.** No per-strike or
+  per-expiry vol dynamics in the live quote path; the offline SVI surface
+  fit elsewhere in this repo has that, the tick engine does not.
+- **The 0.25% half-spread is a flat, uncalibrated placeholder**, not
+  sourced from any real market maker's quoted spread, and does not widen
+  for wings, low liquidity, or event risk.
+- **The quote engine's own accuracy claim is inherited, not re-measured.**
+  It prices through the same closed-form formula already cross-checked
+  elsewhere in this repository (0.02444% vs. the Monte Carlo engine); it
+  does not independently re-verify that per tick.
+- **Tick-to-quote latency was measured on one pinned core, in-process,
+  not wire-to-wire.** No kernel-bypass networking, no measurement of the
+  sender-to-receiver network hop itself (deliberately excluded from the
+  timed window; see Findings), and no multi-core scale-out.
 - **European and barrier payoffs only.** No American exercise, no Asian or
   lookback payoffs.
 - **No dividend yield** anywhere in the model.

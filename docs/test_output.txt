@@ -27,5 +27,11 @@
 [PASS] American implied vol solver converges (put, with dividends)
 [PASS] American implied vol solver round-trips known vol (|0.220000 - 0.220000| <= 0.000100)
 [PASS] 50-step American tree within 0.05 of a 400-step tree (|9.084964 - 9.096184| <= 0.050000)
+[PASS] chain has the designed number of pairs
+[PASS] chain reprices 500+ contracts per tick (520)
+[PASS] put-call-parity shortcut matches independent closed-form put price (max abs diff 0.000000)
+[PASS] every quote's bid <= theo <= ask across the chain
+[PASS] call delta in [0,1] and put delta in [-1,0] across the chain
+[PASS] repricing the same tick twice is bit-identical (memcmp)
 
-29 passed, 0 failed
+35 passed, 0 failed

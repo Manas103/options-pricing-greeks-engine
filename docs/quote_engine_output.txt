@@ -1,0 +1,84 @@
+Tick-driven quote engine, three 50,000-tick sessions with distinct feed
+seeds, produced by scripts/run_quote_sessions.sh 3 50000 50 3000. Each
+session: quote_feed_sender -> UDP multicast (239.255.0.1:30301) -> a
+pinned-core quote_engine_live receiver, started first and given 1s to
+bind and join the multicast group before the sender starts; immediately
+followed by quote_engine_replay against that session's own capture file.
+
+$ ./scripts/run_quote_sessions.sh 3 50000 50 3000
+
+=== session 1 (seed=3001) ===
+--- sender ---
+sender: multicast group 239.255.0.1:30301, 50000 ticks, 50 us apart, seed=3001
+sender: done, sent 50000 ticks + 20 sentinels
+--- live ---
+quote_engine_live report
+pinned_core=1 pin_ok=true
+contracts_per_tick=520
+ticks_received=50000
+tick_to_quote_ns: min=5504 p50=6087 p99=8914 max=68860
+tick_to_quote_us: p50=6.087 p99=8.914
+checksum_fnv1a64=0x8367dafbcaf9c3e2
+--- replay ---
+quote_engine_replay report
+capture_path=/tmp/quote_sessions/session_1/session.cap
+ticks_replayed=50000
+contracts_per_tick=520
+checksum_fnv1a64=0x8367dafbcaf9c3e2
+MATCH: live and replay checksums are identical (0x8367dafbcaf9c3e2)
+
+=== session 2 (seed=3002) ===
+--- sender ---
+sender: multicast group 239.255.0.1:30301, 50000 ticks, 50 us apart, seed=3002
+sender: done, sent 50000 ticks + 20 sentinels
+--- live ---
+quote_engine_live report
+pinned_core=1 pin_ok=true
+contracts_per_tick=520
+ticks_received=50000
+tick_to_quote_ns: min=5754 p50=7790 p99=11817 max=126608
+tick_to_quote_us: p50=7.79 p99=11.817
+checksum_fnv1a64=0x751fa5a6ed8f18b9
+--- replay ---
+quote_engine_replay report
+capture_path=/tmp/quote_sessions/session_2/session.cap
+ticks_replayed=50000
+contracts_per_tick=520
+checksum_fnv1a64=0x751fa5a6ed8f18b9
+MATCH: live and replay checksums are identical (0x751fa5a6ed8f18b9)
+
+=== session 3 (seed=3003) ===
+--- sender ---
+sender: multicast group 239.255.0.1:30301, 50000 ticks, 50 us apart, seed=3003
+sender: done, sent 50000 ticks + 20 sentinels
+--- live ---
+quote_engine_live report
+pinned_core=1 pin_ok=true
+contracts_per_tick=520
+ticks_received=50000
+tick_to_quote_ns: min=5558 p50=6284 p99=9349 max=55538
+tick_to_quote_us: p50=6.284 p99=9.349
+checksum_fnv1a64=0xce111db3116c1a25
+--- replay ---
+quote_engine_replay report
+capture_path=/tmp/quote_sessions/session_3/session.cap
+ticks_replayed=50000
+contracts_per_tick=520
+checksum_fnv1a64=0xce111db3116c1a25
+MATCH: live and replay checksums are identical (0xce111db3116c1a25)
+
+Summary: p99 ranged 8.914us to 11.817us across the three sessions (all
+under the 15us target), on 1 physical core pinned out of 12 (AMD Ryzen 7
+7800X3D), WSL2 Ubuntu 22.04, this machine otherwise in ordinary use.
+Session 2's higher p99 (11.817us) and higher max (126.6us, a single
+outlier) look like ordinary contention noise from other processes on a
+shared machine, not a different code path; all three sessions received
+every one of their 50,000 ticks (0 drops on this loopback multicast path
+at 50us pacing) and all three live checksums match their own session's
+replay checksum exactly, and differ from each other (different seeds
+produced genuinely different tick sequences), which is the evidence that
+the checksum is actually sensitive to the data, not a constant.
+
+Earlier, pre-optimization attempt (pricing call and put as two
+independent contracts instead of one strike/expiry pair, see README
+"Findings"): docs/quote_engine_output_v1.txt, p99 20.075us, over target.

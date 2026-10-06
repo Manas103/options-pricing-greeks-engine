@@ -43,5 +43,12 @@ target_link_libraries(vol_store_invert PRIVATE Threads::Threads)
 add_executable(vol_store_generate_prices apps/vol_store_generate_prices.cpp)
 target_link_libraries(vol_store_generate_prices PRIVATE Threads::Threads)
 
+if(UNIX)
+  add_executable(quote_feed_sender apps/quote_feed_sender.cpp)
+  add_executable(quote_engine_live apps/quote_engine_live.cpp)
+  target_link_libraries(quote_engine_live PRIVATE Threads::Threads)
+  add_executable(quote_engine_replay apps/quote_engine_replay.cpp)
+endif()
+
 enable_testing()
 add_test(NAME hand_rolled_suite COMMAND test_suite)

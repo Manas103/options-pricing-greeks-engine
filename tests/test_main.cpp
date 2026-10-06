@@ -21,8 +21,20 @@
 //      artificially-lowered slice against a floor from the first still
 //      returns a feasible result that respects the floor, not the
 //      unconstrained (lower) optimum.
+//  20. The tick-driven quote chain has the designed pair count and reprices
+//      500+ contracts per tick.
+//  21. quote_engine.hpp's put-call-parity shortcut (one erfc pair per
+//      strike/expiry, deriving the put from the call rather than pricing
+//      it independently) agrees with the untouched closed-form
+//      bs::put_price, the reference-oracle check for that optimization.
+//  22. Every chain quote's bid <= theo <= ask and both deltas stay inside
+//      their theoretical bounds.
+//  23. Repricing the same tick twice is bit-identical (memcmp), the
+//      determinism the bit-for-bit session replay claim relies on.
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -31,6 +43,8 @@
 #include "black_scholes.hpp"
 #include "implied_vol.hpp"
 #include "mc_engine.hpp"
+#include "quote_chain.hpp"
+#include "quote_engine.hpp"
 #include "svi.hpp"
 
 static int g_pass = 0;
@@ -275,6 +289,70 @@ int main() {
         p.steps = 400;
         double fine = ws.price(p, false, crr::Exercise::American);
         check_close(coarse, fine, 0.05, "50-step American tree within 0.05 of a 400-step tree");
+    }
+
+    // 20. Quote engine chain size matches the 500+ contracts/tick claim.
+    {
+        std::vector<quote::Pair> chain = quote::build_chain();
+        check(chain.size() == quote::NUM_PAIRS, "chain has the designed number of pairs");
+        check(chain.size() * 2 >= 500, "chain reprices 500+ contracts per tick (" +
+                                            std::to_string(chain.size() * 2) + ")");
+    }
+
+    // 21. The put-call-parity shortcut in reprice_chain (one erfc pair per
+    // strike/expiry, deriving the put from the call) must agree with the
+    // independent closed-form bs::put_price/put_greeks, which never takes
+    // that shortcut. This is the reference-oracle check for the latency
+    // optimization in quote_engine.hpp's Findings.
+    {
+        std::vector<quote::Pair> chain = quote::build_chain();
+        std::vector<quote::Quote> out(chain.size() * 2);
+        const double S = 97.0, r = 0.03, sigma = 0.22;
+        quote::reprice_chain(chain, S, r, sigma, out.data());
+
+        double max_abs_diff = 0.0;
+        for (std::size_t i = 0; i < chain.size(); ++i) {
+            const quote::Pair& pr = chain[i];
+            bs::BSParams bp{S, pr.K, r, sigma, pr.T};
+            double ref_put = bs::put_price(bp);
+            double got_put = out[2 * i + 1].theo;
+            max_abs_diff = std::max(max_abs_diff, std::fabs(ref_put - got_put));
+        }
+        check(max_abs_diff < 1e-9,
+              "put-call-parity shortcut matches independent closed-form put price (max abs diff " +
+                  std::to_string(max_abs_diff) + ")");
+    }
+
+    // 22. Every quote's bid <= theo <= ask, and call/put deltas stay inside
+    // their theoretical bounds, across the whole chain.
+    {
+        std::vector<quote::Pair> chain = quote::build_chain();
+        std::vector<quote::Quote> out(chain.size() * 2);
+        quote::reprice_chain(chain, 103.0, 0.03, 0.19, out.data());
+        bool spreads_ok = true, deltas_ok = true;
+        for (std::size_t i = 0; i < chain.size(); ++i) {
+            const quote::Quote& c = out[2 * i];
+            const quote::Quote& p = out[2 * i + 1];
+            if (!(c.bid <= c.theo && c.theo <= c.ask)) spreads_ok = false;
+            if (!(p.bid <= p.theo && p.theo <= p.ask)) spreads_ok = false;
+            if (!(c.delta >= 0.0 && c.delta <= 1.0)) deltas_ok = false;
+            if (!(p.delta >= -1.0 && p.delta <= 0.0)) deltas_ok = false;
+        }
+        check(spreads_ok, "every quote's bid <= theo <= ask across the chain");
+        check(deltas_ok, "call delta in [0,1] and put delta in [-1,0] across the chain");
+    }
+
+    // 23. Repricing the same tick twice produces bit-identical output
+    // (same bytes, memcmp-exact), the determinism the bit-for-bit replay
+    // claim depends on.
+    {
+        std::vector<quote::Pair> chain = quote::build_chain();
+        std::vector<quote::Quote> out1(chain.size() * 2), out2(chain.size() * 2);
+        quote::reprice_chain(chain, 101.37, 0.03, 0.245, out1.data());
+        quote::reprice_chain(chain, 101.37, 0.03, 0.245, out2.data());
+        bool identical =
+            std::memcmp(out1.data(), out2.data(), out1.size() * sizeof(quote::Quote)) == 0;
+        check(identical, "repricing the same tick twice is bit-identical (memcmp)");
     }
 
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);

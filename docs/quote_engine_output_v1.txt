@@ -1,0 +1,14 @@
+First attempt: call and put priced as two independent contracts, each
+calling norm_cdf (std::erfc) twice (4 erfc calls per strike/expiry pair).
+Superseded by the put-call-parity version below; kept as the "before"
+measurement for the Findings section.
+
+$ ./build/quote_engine_live /tmp/quote_session/session.cap /tmp/quote_session/live_report.txt 1
+quote_engine_live: pinned_core=1 (pin ok), chain=520 contracts, listening on 239.255.0.1:30301
+quote_engine_live report
+pinned_core=1 pin_ok=true
+contracts_per_tick=520
+ticks_received=20000
+tick_to_quote_ns: min=12152 p50=13584 p99=20075 max=76967
+tick_to_quote_us: p50=13.584 p99=20.075
+checksum_fnv1a64=0x4b5d0c4eaa034b64
