@@ -45,6 +45,8 @@
 #include "mc_engine.hpp"
 #include "quote_chain.hpp"
 #include "quote_engine.hpp"
+#include "scenario_book.hpp"
+#include "scenario_grid.hpp"
 #include "svi.hpp"
 
 static int g_pass = 0;
@@ -353,6 +355,81 @@ int main() {
         bool identical =
             std::memcmp(out1.data(), out2.data(), out1.size() * sizeof(quote::Quote)) == 0;
         check(identical, "repricing the same tick twice is bit-identical (memcmp)");
+    }
+
+    // 24. generate_book is deterministic in the seed: two generations from
+    // the same seed produce an identical book (same strikes, quantities),
+    // the determinism the scenario manifest's reproducibility claim relies
+    // on.
+    {
+        std::vector<scenario::Position> b1 = scenario::generate_book(7);
+        std::vector<scenario::Position> b2 = scenario::generate_book(7);
+        bool identical = b1.size() == b2.size();
+        for (size_t i = 0; identical && i < b1.size(); ++i) {
+            identical = b1[i].S0 == b2[i].S0 && b1[i].K == b2[i].K && b1[i].qty == b2[i].qty &&
+                        b1[i].is_call == b2[i].is_call;
+        }
+        check(identical && b1.size() == 1800,
+              "generate_book(seed) is deterministic and produces 1,800 positions");
+    }
+
+    // 25. Zero shock full revaluation reproduces the base price exactly (a
+    // conservation identity: no shock, no P&L).
+    {
+        std::vector<scenario::Position> book = scenario::generate_book(7);
+        bool ok = true;
+        for (const auto& p : book) {
+            scenario::PositionGreeks g = scenario::position_base(p);
+            double reval = scenario::full_reval_price(p, 0.0, 0.0);
+            if (std::fabs(reval - g.price) > 1e-9) ok = false;
+        }
+        check(ok, "zero-shock full revaluation equals the base price for every position");
+    }
+
+    // 26. The independent quadrature reference oracle agrees with the
+    // closed-form fast path on a small deterministic sample (a cross-check
+    // between two different algorithms, not the same formula twice).
+    {
+        std::vector<scenario::Position> book = scenario::generate_book(7);
+        double max_rel = 0.0;
+        double shocks[3] = {-0.15, 0.0, 0.20};
+        double vols[3] = {-0.03, 0.0, 0.10};
+        for (int i = 0; i < 20; ++i) {
+            const auto& p = book[i * 7 % book.size()];
+            double fast = scenario::full_reval_price(p, shocks[i % 3], vols[i % 3]);
+            double oracle = scenario::full_reval_price_oracle(p, shocks[i % 3], vols[i % 3]);
+            double denom = std::max(1e-8, std::fabs(oracle));
+            max_rel = std::max(max_rel, std::fabs(fast - oracle) / denom);
+        }
+        check(max_rel < 1e-4, "quadrature reference oracle matches closed form (max rel diff " +
+                                   std::to_string(max_rel) + ")");
+    }
+
+    // 27. generate_historical is deterministic in the seed and respects the
+    // leverage-effect sign convention loosely (negative correlation input
+    // produces a negative sample correlation on a large draw).
+    {
+        scenario::ScenarioManifest m;
+        m.n_historical = 5000;
+        std::vector<scenario::Scenario> h1 = scenario::generate_historical(m);
+        std::vector<scenario::Scenario> h2 = scenario::generate_historical(m);
+        bool identical = h1.size() == h2.size();
+        for (size_t i = 0; identical && i < h1.size(); ++i) {
+            identical = h1[i].spot_shock == h2[i].spot_shock && h1[i].vol_shift == h2[i].vol_shift;
+        }
+        double mean_s = 0, mean_v = 0;
+        for (auto& s : h1) { mean_s += s.spot_shock; mean_v += s.vol_shift; }
+        mean_s /= h1.size();
+        mean_v /= h1.size();
+        double cov = 0, var_s = 0, var_v = 0;
+        for (auto& s : h1) {
+            double ds = s.spot_shock - mean_s, dv = s.vol_shift - mean_v;
+            cov += ds * dv; var_s += ds * ds; var_v += dv * dv;
+        }
+        double corr = cov / std::sqrt(var_s * var_v);
+        check(identical, "generate_historical(seed) is deterministic");
+        check(corr < -0.4, "historical spot/vol draw reproduces the negative leverage "
+                            "correlation (sample corr " + std::to_string(corr) + ")");
     }
 
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);

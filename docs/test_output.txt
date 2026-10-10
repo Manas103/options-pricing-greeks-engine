@@ -33,5 +33,10 @@
 [PASS] every quote's bid <= theo <= ask across the chain
 [PASS] call delta in [0,1] and put delta in [-1,0] across the chain
 [PASS] repricing the same tick twice is bit-identical (memcmp)
+[PASS] generate_book(seed) is deterministic and produces 1,800 positions
+[PASS] zero-shock full revaluation equals the base price for every position
+[PASS] quadrature reference oracle matches closed form (max rel diff 0.000000)
+[PASS] generate_historical(seed) is deterministic
+[PASS] historical spot/vol draw reproduces the negative leverage correlation (sample corr -0.600996)
 
-35 passed, 0 failed
+40 passed, 0 failed

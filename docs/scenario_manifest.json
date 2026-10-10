@@ -1,0 +1,14 @@
+{
+  "book_seed": 7,
+  "historical_seed": 2027,
+  "n_historical": 2000,
+  "n_hyp_spot": 500,
+  "n_hyp_vol": 476,
+  "hyp_spot_lo": -0.25,
+  "hyp_spot_hi": 0.1,
+  "hyp_vol_lo": -0.06,
+  "hyp_vol_hi": 0.35,
+  "hist_spot_sigma": 0.012,
+  "hist_vol_sigma": 0.01,
+  "hist_corr": -0.6
+}

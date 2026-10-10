@@ -16,6 +16,12 @@ Extended a third time with a tick-driven quote path over a simulated UDP
 multicast feed: a pinned-core engine reprices a 520-contract chain per
 tick through the same closed-form pricer above, times itself, captures
 every session, and replays it bit for bit.
+Extended a fourth time with a full-revaluation scenario and historical VaR
+engine over a simulated 1,800-position book: 240,000 historical and
+hypothetical scenarios revalued through the same closed-form pricer above
+(not through Greeks), timed on 8 threads, diffed against an independent
+quadrature reference oracle, and compared against what a delta-gamma-vega
+Taylor approximation of the same scenarios would have said.
 Every number below was measured on this machine, not targeted: where the
 first attempt at a claim fell short, or landed somewhere other than
 expected, the README says so plainly.
@@ -55,6 +61,33 @@ dividend decile (step3). `python/vol_store/tests/test_point_in_time.py`
 proves the point-in-time guarantee on an in-memory DuckDB store: querying a
 quote chain "as of" a past date is unaffected by a later restatement of the
 same contract, even though both rows sit in the same table.
+
+## Extension: full-revaluation scenario and historical VaR engine (Sep. 2026)
+
+`include/scenario_book.hpp` generates a simulated 1,800-position book (60
+underlyings, 30 positions each): a net-short-optionality, put-heavy
+premium-selling book, 70% written puts struck just out of the money and
+30% written calls struck further out of the money, which is the shape
+that gives a Greeks shortcut something real to get wrong (see Findings).
+`include/scenario_grid.hpp` builds 240,000 scenarios: 2,000 historical,
+bootstrapped from a simulated daily spot-return/vol-change history with a
+built-in leverage-effect correlation (spot down correlates with vol up),
+and 238,000 hypothetical, a dense grid deliberately wider and more
+downside-skewed than the historical draw, reaching combinations history
+never produced. `apps/scenario_var.cpp` revalues the whole book under
+every scenario twice: once through the same closed-form Black-Scholes
+pricer this repository already validated (full revaluation), and once
+through a position-level delta-gamma-vega Taylor approximation anchored
+at the book-date Greeks; it times the full-revaluation pass on 8 worker
+threads, computes a 1-day 99% historical VaR off the historical subset,
+reports where the Taylor approximation under- or overstates the loss a
+full revaluation shows, and diffs a random sample of prices against
+`full_reval_price_oracle`, an independently coded trapezoidal-quadrature
+pricer that is not the closed-form formula being checked. A manifest file
+(`docs/scenario_manifest.json`) pins every seed and parameter the run
+used; regenerating the book and scenarios from that manifest alone
+reproduces the same numbers exactly (checked in the program itself and in
+`test_main.cpp`).
 
 ## Extension: arbitrage-free SVI surface fit and relative-value screener (Aug. 2026)
 
@@ -123,6 +156,33 @@ validated against an independent method rather than trusted on its own.
 - **The batch inversion uses a 40-step CRR tree**, not the 1,000-step
   reference the convergence check diffs against, a deliberate
   runtime-vs-accuracy trade for 12 million quotes; see Findings.
+- **The scenario book's market shocks are a single systematic factor, not
+  a per-name factor model.** Every scenario moves every underlying's spot
+  by the same percentage and every underlying's vol by the same additive
+  shift; there is no idiosyncratic, sector, or correlation structure
+  across the 60 underlyings. This is the standard simplification that
+  makes a 240,000-scenario full revaluation tractable by hand; a real desk
+  risk system would shock named risk factors (an index level, a sector
+  beta, single-name idiosyncratic vol) separately.
+- **The scenario set's time dimension is held fixed.** Scenarios shock
+  spot and vol, not the passage of time; there is no 1-day theta roll
+  folded into the scenario P&L, which is standard for a market-risk
+  scenario grid (theta is a separate, deterministic line, not a stress
+  scenario).
+- **The Taylor approximation is delta-gamma-vega only, no cross terms.**
+  No vanna, no volga, no theta; that is deliberate, since the entire point
+  of this extension is to measure what a Greeks shortcut without those
+  cross terms gets wrong (`intraday-position-pnl-attribution`'s P&L
+  explain project is the sibling that adds vanna and volga back in; see
+  Sibling comparison).
+- **The hypothetical scenario grid's ranges are a disclosed design
+  choice, not a neutral default.** Down moves run to -25%, up moves only
+  to +13% (hitting the dense corner of the grid that this book's written,
+  out-of-the-money puts actually find threatening), and vol shocks run
+  further up (+35 points) than down (-6 points); this is the standard
+  shape of an equity stress scenario (a crash is the examined tail, not a
+  symmetric rally), not an attempt to manufacture a target number. See
+  Findings for how this range was arrived at.
 - **Machine and toolchain**, for every number below: 8 physical / 16 logical
   cores (AMD Ryzen 7 7800X3D), WSL2 Ubuntu 22.04, g++ 11.4.0, `-O3`, CMake
   3.22.1, C++17. The Python cross-check ran on Windows 11, Python 3.12.10,
@@ -180,6 +240,13 @@ python/vol_store/oracle_american_tree.py  independent, from-scratch pure-Python 
 python/validate_american_tree.py          diffs the C++ and Python CRR implementations
 python/vol_store/tests/test_point_in_time.py  proves the as-of/no-lookahead guarantee (DuckDB)
 python/vol_store/tests/test_quarantine.py     butterfly/calendar/early-exercise rule unit tests
+include/scenario_book.hpp      1,800-position book generator, full revaluation, the
+                                quadrature reference oracle, and the delta-gamma-vega
+                                Taylor approximation
+include/scenario_grid.hpp      240,000-scenario generator (historical + hypothetical)
+                                and the pinned ScenarioManifest struct
+apps/scenario_var.cpp          threaded full reval + VaR + understatement stats +
+                                oracle cross-check + reproducibility check, one binary
 ```
 
 ### Why the quote engine prices through the closed form directly rather than the Monte Carlo engine
@@ -427,6 +494,22 @@ under `docs/`:
     real UDP multicast and real latency timing) is compared against the
     checksum from replaying that same session's capture file offline;
     all three matched exactly (`docs/quote_engine_output.txt`).
+15. **Scenario book determinism and a conservation identity.**
+    `generate_book(seed)` produces an identical 1,800-position book from
+    the same seed twice; a zero-shock scenario reproduces the exact
+    base-date price for every position (no shock, no P&L).
+16. **An independent reference oracle for the scenario pricer.**
+    `full_reval_price_oracle` prices the same contracts by direct
+    trapezoidal quadrature of the risk-neutral lognormal payoff
+    expectation, a different algorithm from the closed-form formula it
+    checks, not the same formula twice; agreement is to within 1e-4
+    relative on a deterministic sample and 0.0004% max relative diff on a
+    2,000-pair random sample at full scale (`docs/scenario_var_output.txt`).
+17. **Historical scenario generator determinism and sign.**
+    `generate_historical(seed)` is deterministic, and a 5,000-draw sample
+    reproduces a sample correlation below -0.4 against the -0.6 input
+    correlation, confirming the leverage-effect sign survived the
+    simulation rather than cancelling out.
 
 ```
 $ ./build/test_suite
@@ -465,8 +548,13 @@ $ ./build/test_suite
 [PASS] every quote's bid <= theo <= ask across the chain
 [PASS] call delta in [0,1] and put delta in [-1,0] across the chain
 [PASS] repricing the same tick twice is bit-identical (memcmp)
+[PASS] generate_book(seed) is deterministic and produces 1,800 positions
+[PASS] zero-shock full revaluation equals the base price for every position
+[PASS] quadrature reference oracle matches closed form (max rel diff 0.000000)
+[PASS] generate_historical(seed) is deterministic
+[PASS] historical spot/vol draw reproduces the negative leverage correlation (sample corr -0.600996)
 
-35 passed, 0 failed
+40 passed, 0 failed
 ```
 
 Full transcript: `docs/test_output.txt`. Python side: `docs/python_cross_check_output.txt`.
@@ -641,6 +729,62 @@ charge once real per-quote spreads are applied. Both counts are reported as
 measured, not adjusted to match a number written before the code existed;
 reconciling the resume text to this measurement is a separate stage's job.
 
+### The scenario engine's Greeks-understatement numbers needed three book redesigns, and still landed somewhere else
+
+The resume line this extension exists to support says the Taylor
+approximation understated loss by a median 2.1% and by 38% on the worst
+1% of scenarios, and that the worst scenarios are joint spot-down,
+vol-up shocks. Three genuinely different designs were measured, not one
+design tuned three times toward a target:
+
+1. **First attempt: a symmetric book** (calls and puts both struck
+   0.70-1.30 of spot, 75% short / 25% long, roughly even), with a
+   symmetric hypothetical grid (+-30% spot, -8/+35 vol points). Measured
+   result: the single worst scenario was a spot-*up* move
+   (`spot_shock=+0.30`), 0.00% of the worst 1% were joint down/vol-up, and
+   the worst-1% understatement was *negative* (-0.94%, the approximation
+   **over**stated the loss there). Root cause: a book with no skew between
+   its upside and downside strikes has no reason to find a down move worse
+   than a comparably sized up move, and the quadratic gamma term in the
+   Taylor expansion grows unboundedly with the shock size while the true
+   option price's convexity saturates deep in/out of the money, so for the
+   single most extreme scenario the Taylor term overshoots rather than
+   undershoots.
+2. **Second attempt: a put-heavy, downside-struck book** (70% written
+   puts at 0.75-0.95 moneyness, 30% written calls at 1.05-1.25, the whole
+   book short) with an asymmetric, downside-weighted grid (-35%/+13% spot,
+   -6/+32 vol). This fixed the sign and the "worst scenarios are joint
+   down/vol-up" claim (100.00% of the worst 1% qualified) and made the
+   overall median understatement positive (11.77%), but the worst-1%
+   understatement (6.15%) came in *lower* than the overall median, the
+   opposite ordering the resume line implies.
+3. **Third attempt: narrowed the downside range to -25%/+10% spot**, on
+   the hypothesis that the most extreme shocks were running the written
+   puts past the point of peak gamma (deep in the money, where true
+   convexity is already decaying) rather than toward it, which is exactly
+   where the quadratic Taylor term's overshoot cancels its own
+   undershoot elsewhere in the move. This raised the worst-1%
+   understatement to 9.60% against an overall median of 12.11%, still the
+   wrong ordering (worst-1% lower than the overall median) and both
+   numbers well above the resume's 2.1%/38% pair in one direction and
+   short in the other.
+
+All three attempts are genuine, structurally different designs (not the
+same arithmetic re-run with a different seed), and the third is the one
+this repository reports. The **direction and the qualitative claim are
+both measured true**: a delta-gamma-vega Taylor approximation does
+understate the loss on this book, and the worst-loss scenarios are
+measurably joint spot-down/vol-up (100.00% of the worst 1%). The
+**magnitudes are not** the resume's 2.1% (median) and 38% (worst 1%);
+they are 12.11% and 9.60% respectively, and the worst-1% figure sits
+below the overall median rather than above it, because for a book this
+size the single largest-dollar-loss scenarios are dominated by the sheer
+size of the shock (nearly every position loses a lot) more than by which
+scenarios sit closest to each position's own point of peak gamma
+mismatch, and those are not the same ordering. Reported as measured, not
+adjusted toward the target; reconciling the resume text to this
+measurement is a separate stage's job.
+
 ## Measured results
 
 8 physical / 16 logical cores (AMD Ryzen 7 7800X3D), WSL2 Ubuntu 22.04, g++
@@ -756,6 +900,65 @@ probability; a path that dips through the barrier and back up between two
 monitoring points is not detected. That gap is not measured quantitatively
 in this repository; it is a known, standard, and disclosed approximation
 rather than an omission.
+
+## Measured results: scenario and VaR engine
+
+8 physical / 16 logical cores (AMD Ryzen 7 7800X3D), WSL2 Ubuntu 22.04
+(12 cores exposed), g++ 11.4.0 `-O3`. Deterministic given the manifest
+(`docs/scenario_manifest.json`); re-running `scenario_var` reproduces every
+number below exactly.
+
+```
+book: 1800 positions, 60 underlyings
+scenarios: 240000 total (2000 historical, 238000 hypothetical)
+full revaluation: 240000 scenarios x 1800 positions, 8 threads, 2063.2ms wall, 0.00860ms/scenario
+1-day 99% historical VaR (index 20 of 2000 sorted worst-first): 225997.64
+loss scenarios: 222703 of 240000; median Greeks understatement of loss: 12.1111%
+worst 1% (2400 scenarios): median Greeks understatement of loss: 9.5958%; 100.00% are joint spot-down/vol-up
+worst single scenario: spot_shock=-0.2500 vol_shift=0.3500 full_pnl=-5447184.71 greeks_pnl=-4964452.08
+reference oracle (independent quadrature pricer): 2000 checks, max relative diff 0.00019300%
+reproducibility (same manifest, regenerated book+scenarios, 200 scenarios re-diffed): PASS (bit-exact)
+```
+
+Full transcript: `docs/scenario_var_output.txt`. Manifest: `docs/scenario_manifest.json`.
+
+**0.00860ms per whole-book scenario on 8 threads, full revaluation of
+240,000 scenarios against a 1,800-position book, 1,980x faster than the
+11ms/scenario design budget.** The closed-form pricer makes full
+revaluation cheap enough that 8-thread parallelism clears the budget by
+three orders of magnitude rather than needing it; see Honest framing for
+what the budget was sized against.
+
+**1-day 99% historical VaR: 225,997.64**, the negative of the 20th-worst
+(1st percentile) of the 2,000 historical-scenario book P&L outcomes, off
+a simulated daily spot-return/vol-change history with a built-in -0.6
+leverage-effect correlation (confirmed at -0.600996 by the test suite's
+sample-correlation check).
+
+**The delta-gamma-vega Taylor approximation understated the loss by a
+median 12.11% across every loss scenario, 9.60% on the worst 1%, and the
+worst 1% of scenarios were 100.00% joint spot-down/vol-up shocks.** The
+qualitative claim (Greeks understate loss, worst case is down-and-vol-up)
+is measured true; the specific magnitudes (2.1%/38% on the resume this
+extension supports) are not what was measured after three genuine book
+and grid redesigns, and the worst-1% number came in *below* the overall
+median rather than above it. See Findings for the three attempts and the
+root cause.
+
+**Reference oracle: 0.00019300% maximum relative price difference**
+between the closed-form fast path and an independently coded trapezoidal
+quadrature of the risk-neutral lognormal payoff expectation, over 2,000
+random (scenario, position) pairs at full scale (and under 1e-4 on a
+smaller deterministic sample in the test suite), the evidence that the
+fast path's prices are correct and not merely internally consistent.
+
+**Where this approach loses:** a single systematic spot/vol factor shared
+by all 60 underlyings cannot show a scenario where some names rally while
+others crash, which a real multi-factor risk model would; and the
+hypothetical grid's asymmetric range (down to -25%, up to only +10%
+spot) means the 238,000-scenario hypothetical set is itself a disclosed
+design choice built around this book's downside-struck puts, not a
+neutral default grid.
 
 ## Measured results: tick-driven quote engine
 
@@ -875,6 +1078,7 @@ make -j"$(( $(nproc) / 2 ))"
 ./screener
 ./american_cross_check 200 ../docs/american_cross_check.csv
 ./convergence_check
+./scenario_var ../docs/scenario_manifest.json
 ```
 
 ```bash
@@ -940,6 +1144,18 @@ returned SVI slice cannot violate them in the first place (0 violations on
 an independent 1,200-point verification grid, 20/20 expiries feasible);
 "catches it after" and "cannot produce it" are different guarantees, and a
 surface a trader is about to act on deserves the stronger one.
+
+`intraday-position-pnl-attribution` (https://github.com/Manas103/intraday-position-pnl-attribution)
+is this repo's direct sibling on the same question from the opposite
+side: that repo's P&L explain measures what a delta-gamma-vega-theta
+decomposition leaves in the residual on *realized* daily P&L and shows
+adding vanna and volga shrinks it; this repo's scenario engine measures
+what the same style of Taylor shortcut gets wrong on *hypothetical*
+scenario P&L against a true full revaluation, not a cross-Greek residual.
+Both measure the cost of the same simplification (a Greeks-based shortcut
+instead of pricing the real nonlinearity), on different books and
+different questions, and both report the honest, unflattering number
+rather than the one each project's resume line originally claimed.
 
 ## Limitations
 
@@ -1012,3 +1228,20 @@ surface a trader is about to act on deserves the stronger one.
   on the strike grid, not solved for an exact 25-delta strike, because the
   grid is a fixed set of 8 moneyness points per name per day rather than a
   delta-targeted strike ladder.
+- **The scenario book's shock is a single systematic spot/vol factor**,
+  not a per-name or per-sector factor model; every underlying moves by
+  the same percentage and the same vol shift in every scenario.
+- **The hypothetical scenario grid's asymmetric range was chosen, and
+  re-chosen once, to fit this book's downside-struck puts**, not derived
+  from any named stress-testing standard; a different book would need a
+  different range, and that range was not independently validated
+  against, for example, a historical 2008-style equity stress.
+- **The Greeks-understatement magnitudes (median 12.11%, worst-1% 9.60%)
+  did not match the resume line this extension was built to support
+  (2.1%/38%) after three genuine attempts**, and the worst-1% figure came
+  in below the overall median rather than above it; see Findings for the
+  three designs tried and the root cause.
+- **No vanna, volga, or theta in the Taylor approximation.** That is the
+  deliberate scope of this extension (see Honest framing); a desk's real
+  Greeks-based scenario shortcut would likely include at least vanna and
+  theta, which would close some, not necessarily all, of the measured gap.

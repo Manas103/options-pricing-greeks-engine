@@ -43,6 +43,9 @@ target_link_libraries(vol_store_invert PRIVATE Threads::Threads)
 add_executable(vol_store_generate_prices apps/vol_store_generate_prices.cpp)
 target_link_libraries(vol_store_generate_prices PRIVATE Threads::Threads)
 
+add_executable(scenario_var apps/scenario_var.cpp)
+target_link_libraries(scenario_var PRIVATE Threads::Threads)
+
 if(UNIX)
   add_executable(quote_feed_sender apps/quote_feed_sender.cpp)
   add_executable(quote_engine_live apps/quote_engine_live.cpp)

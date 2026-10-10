@@ -1,0 +1,9 @@
+book: 1800 positions, 60 underlyings
+scenarios: 240000 total (2000 historical, 238000 hypothetical)
+full revaluation: 240000 scenarios x 1800 positions, 8 threads, 2063.2ms wall, 0.00860ms/scenario
+1-day 99% historical VaR (index 20 of 2000 sorted worst-first): 225997.64
+loss scenarios: 222703 of 240000; median Greeks understatement of loss: 12.1111%
+worst 1% (2400 scenarios): median Greeks understatement of loss: 9.5958%; 100.00% are joint spot-down/vol-up
+worst single scenario: spot_shock=-0.2500 vol_shift=0.3500 full_pnl=-5447184.71 greeks_pnl=-4964452.08
+reference oracle (independent quadrature pricer): 2000 checks, max relative diff 0.00019300%
+reproducibility (same manifest, regenerated book+scenarios, 200 scenarios re-diffed): PASS (bit-exact)
